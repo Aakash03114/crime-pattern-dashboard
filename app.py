@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from prophet import Prophet
+from prophet.serialize import model_to_json, model_from_json
 from utils import authenticate_user
 import json
 import io
