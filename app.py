@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from prophet import Prophet
 from utils import authenticate_user
 import json
 import io
@@ -40,7 +41,6 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
     # File uploader for user CSV
     uploaded_file = st.file_uploader("📂 Upload your Crime Data CSV", type="csv")
 
-    # Optional sample download
     sample_csv = """date,crime_type,latitude,longitude
 2023-01-01,Theft,13.0827,80.2707
 2023-01-02,Assault,13.0829,80.2710
@@ -54,23 +54,18 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
             st.error(f"❌ Failed to read uploaded file: {e}")
             st.stop()
 
-        # Normalize column names to lowercase
         df.columns = df.columns.str.lower()
-
-        # Validate required columns
         required_columns = {'date', 'crime_type', 'latitude', 'longitude'}
         if not required_columns.issubset(df.columns):
             st.error("❗ Uploaded CSV must contain columns: 'date', 'crime_type', 'latitude', 'longitude'")
             st.stop()
 
-        # Try converting 'date' column
         try:
             df['date'] = pd.to_datetime(df['date'])
         except Exception as e:
             st.error(f"❗ Couldn't parse 'date' column: {e}")
             st.stop()
 
-        # Role-based dashboards
         if role == "public":
             st.info("Public View: Limited Access")
             st.subheader("Crime Count by Type")
@@ -98,6 +93,26 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
 
             st.subheader("📍 Crime Map")
             st.map(df[['latitude', 'longitude']].dropna())
+
+            # 📈 Add Predictive Forecast
+            with st.expander("📈 Predict Future Crime Counts"):
+                st.subheader("📅 Crime Forecast (Next 30 Days)")
+                forecast_data = df.copy()
+                forecast_data['date'] = pd.to_datetime(forecast_data['date'])
+                daily_counts = forecast_data.groupby('date').size().reset_index(name='count')
+                daily_counts = daily_counts.rename(columns={'date': 'ds', 'count': 'y'})
+
+                if len(daily_counts) > 10:
+                    model = Prophet()
+                    model.fit(daily_counts)
+
+                    future = model.make_future_dataframe(periods=30)
+                    forecast = model.predict(future)
+
+                    fig = px.line(forecast, x='ds', y='yhat', title="Forecasted Daily Crime Count")
+                    st.plotly_chart(fig)
+                else:
+                    st.warning("Not enough data to generate a reliable forecast.")
 
             if st.button("Download Full Data"):
                 df.to_csv("full_data.csv", index=False)
