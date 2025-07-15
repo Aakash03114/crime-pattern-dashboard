@@ -1,0 +1,14 @@
+{
+  "public": {
+    "password": "123",
+    "role": "public"
+  },
+  "analyst": {
+    "password": "analyst123",
+    "role": "analyst"
+  },
+  "law": {
+    "password": "law123",
+    "role": "law_enforcement"
+  }
+}
