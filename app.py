@@ -119,7 +119,7 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                     df.to_excel(writer, index=False, sheet_name="Crime Data")
                 st.download_button("📄 Download Excel", data=excel_buffer.getvalue(), file_name="crime_data.xlsx")
 
-            # PDF Summary
+            # PDF Summary (Fixed)
             if st.button("Download PDF Summary"):
                 from fpdf import FPDF
                 pdf = FPDF()
@@ -128,9 +128,11 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                 pdf.cell(200, 10, txt="Crime Summary Report", ln=True, align='C')
                 pdf.ln(10)
 
-                summary = df['crime_type'].value_counts().reset_index()
+                summary = df['crime_type'].value_counts().reset_index(name='count')
+                summary.columns = ['crime_type', 'count']
                 for _, row in summary.iterrows():
-                    pdf.cell(200, 10, txt=f"{row['index']}: {row['crime_type']}", ln=True)
+                    pdf.cell(200, 10, txt=f"{row['crime_type']}: {row['count']}", ln=True)
+
                 pdf_output = io.BytesIO(pdf.output(dest='S').encode('latin-1'))
                 st.download_button("📄 Download PDF", data=pdf_output, file_name="crime_summary.pdf")
     else:
