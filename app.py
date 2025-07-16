@@ -13,10 +13,33 @@ username = st.sidebar.text_input("Username")
 password = st.sidebar.text_input("Password", type="password")
 login_btn = st.sidebar.button("Login")
 
+# Signup Section
+st.sidebar.markdown("---")
+st.sidebar.subheader("📝 New User? Sign Up Below")
+new_username = st.sidebar.text_input("New Username")
+new_password = st.sidebar.text_input("New Password", type="password")
+new_role = st.sidebar.selectbox("Select Role", ["public", "analyst", "law_enforcement"])
+signup_btn = st.sidebar.button("Sign Up")
+
 # Load user credentials
 try:
-    with open("users.json") as f:
+    with open("users.json", "r+") as f:
         users_data = json.load(f)
+
+        if signup_btn:
+            if not new_username or not new_password:
+                st.sidebar.error("Please enter both username and password.")
+            elif new_username in users_data:
+                st.sidebar.error("Username already exists!")
+            else:
+                users_data[new_username] = {
+                    "password": new_password,
+                    "role": new_role
+                }
+                f.seek(0)
+                json.dump(users_data, f, indent=2)
+                f.truncate()
+                st.sidebar.success("Account created successfully! You can now log in.")
 except Exception as e:
     st.error(f"❌ users.json load failed: {e}")
     st.stop()
