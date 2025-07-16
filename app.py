@@ -119,7 +119,7 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                     df.to_excel(writer, index=False, sheet_name="Crime Data")
                 st.download_button("📄 Download Excel", data=excel_buffer.getvalue(), file_name="crime_data.xlsx")
 
-            # PDF Summary (Fixed)
+            # PDF Summary
             if st.button("Download PDF Summary"):
                 from fpdf import FPDF
                 pdf = FPDF()
@@ -135,6 +135,30 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
 
                 pdf_output = io.BytesIO(pdf.output(dest='S').encode('latin-1'))
                 st.download_button("📄 Download PDF", data=pdf_output, file_name="crime_summary.pdf")
+
+            # Crime Forecasting
+            st.subheader("📈 Predict Future Crime Counts")
+            try:
+                from prophet import Prophet
+
+                forecast_data = df['date'].value_counts().reset_index()
+                forecast_data.columns = ['ds', 'y']
+                forecast_data = forecast_data.sort_values('ds')
+
+                model = Prophet()
+                model.fit(forecast_data)
+
+                future = model.make_future_dataframe(periods=30)
+                forecast = model.predict(future)
+
+                st.success("Prediction for next 30 days")
+                fig = px.line(forecast, x='ds', y='yhat', title="📉 Crime Forecast (Next 30 Days)",
+                              labels={'ds': 'Date', 'yhat': 'Predicted Crime Count'})
+                st.plotly_chart(fig)
+
+            except Exception as e:
+                st.error(f"❌ Forecasting failed: {e}")
+
     else:
         st.warning("⬆️ Please upload a valid CSV file to continue.")
 else:
