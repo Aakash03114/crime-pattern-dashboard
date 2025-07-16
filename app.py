@@ -136,7 +136,7 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                 pdf_output = io.BytesIO(pdf.output(dest='S').encode('latin-1'))
                 st.download_button("📄 Download PDF", data=pdf_output, file_name="crime_summary.pdf")
 
-            # Crime Forecasting
+            # Forecasting
             st.subheader("📈 Predict Future Crime Counts")
             try:
                 from prophet import Prophet
@@ -158,6 +158,28 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
 
             except Exception as e:
                 st.error(f"❌ Forecasting failed: {e}")
+
+            # Hotspot Detection
+            st.subheader("🔥 Crime Hotspot Detection")
+
+            from sklearn.cluster import KMeans
+            location_df = df[['latitude', 'longitude']].dropna()
+
+            if len(location_df) < 3:
+                st.warning("Not enough data for hotspot detection (minimum 3 locations required).")
+            else:
+                k = st.slider("Select number of clusters", min_value=2, max_value=10, value=3)
+                kmeans = KMeans(n_clusters=k, random_state=0)
+                location_df['cluster'] = kmeans.fit_predict(location_df)
+
+                st.success(f"Detected {k} crime hotspots")
+
+                fig = px.scatter_mapbox(location_df,
+                                        lat='latitude', lon='longitude',
+                                        color='cluster', zoom=10,
+                                        mapbox_style="carto-positron",
+                                        title="🗺️ Crime Hotspots via Clustering")
+                st.plotly_chart(fig)
 
     else:
         st.warning("⬆️ Please upload a valid CSV file to continue.")
