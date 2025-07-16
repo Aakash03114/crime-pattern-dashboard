@@ -25,7 +25,6 @@ signup_btn = st.sidebar.button("Sign Up")
 try:
     with open("users.json", "r+") as f:
         users_data = json.load(f)
-
         if signup_btn:
             if not new_username or not new_password:
                 st.sidebar.error("Please enter both username and password.")
@@ -101,7 +100,7 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
             filtered = df[df['crime_type'] == crime_type]
             st.line_chart(filtered['date'].value_counts().sort_index())
 
-            if st.button("Download Filtered Report"):
+            if st.button("Download Filtered Report (CSV)"):
                 filtered.to_csv("filtered_report.csv", index=False)
                 with open("filtered_report.csv", "rb") as f:
                     st.download_button("Download CSV", f, "report.csv")
@@ -113,10 +112,27 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
             st.subheader("📍 Crime Map")
             st.map(df[['latitude', 'longitude']].dropna())
 
-            if st.button("Download Full Data"):
-                df.to_csv("full_data.csv", index=False)
-                with open("full_data.csv", "rb") as f:
-                    st.download_button("Download CSV", f, "full_data.csv")
+            # Excel Report
+            if st.button("Download Excel Report"):
+                excel_buffer = io.BytesIO()
+                with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, index=False, sheet_name="Crime Data")
+                st.download_button("📄 Download Excel", data=excel_buffer.getvalue(), file_name="crime_data.xlsx")
+
+            # PDF Summary
+            if st.button("Download PDF Summary"):
+                from fpdf import FPDF
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", size=12)
+                pdf.cell(200, 10, txt="Crime Summary Report", ln=True, align='C')
+                pdf.ln(10)
+
+                summary = df['crime_type'].value_counts().reset_index()
+                for _, row in summary.iterrows():
+                    pdf.cell(200, 10, txt=f"{row['index']}: {row['crime_type']}", ln=True)
+                pdf_output = io.BytesIO(pdf.output(dest='S').encode('latin-1'))
+                st.download_button("📄 Download PDF", data=pdf_output, file_name="crime_summary.pdf")
     else:
         st.warning("⬆️ Please upload a valid CSV file to continue.")
 else:
