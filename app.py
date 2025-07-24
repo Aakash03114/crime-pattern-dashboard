@@ -5,99 +5,183 @@ from utils import authenticate_user
 import json
 import io
 
-# Page configuration
 st.set_page_config(page_title="Crime Pattern Dashboard", layout="wide")
 
-# Custom CSS for centered login box
-st.markdown("""
-    <style>
-        .login-container {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            background-color: #f4f4f4;
-        }
-        .login-box {
-            background-color: white;
-            padding: 2rem;
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            width: 350px;
-        }
-        .login-box h2 {
-            text-align: center;
-            margin-bottom: 1rem;
-            color: #333;
-        }
-        .stButton>button {
-            width: 100%;
-        }
-        .signup-divider {
-            border-top: 1px solid #ccc;
-            margin: 20px 0;
-        }
-    </style>
-""", unsafe_allow_html=True)
+# Sidebar Login
+with st.sidebar:
+    st.markdown("<h2>&#128274; Login</h2>", unsafe_allow_html=True)
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    login_btn = st.button("Login")
 
-# Container for login page
-if 'logged_in' not in st.session_state or not st.session_state['logged_in']:
-    st.markdown("<div class='login-container'>", unsafe_allow_html=True)
-    with st.container():
-        st.markdown("<div class='login-box'>", unsafe_allow_html=True)
+    st.markdown("<hr>", unsafe_allow_html=True)
+    st.markdown("<h4>&#128221; New User? Sign Up</h4>", unsafe_allow_html=True)
+    new_username = st.text_input("New Username")
+    new_password = st.text_input("New Password", type="password")
+    new_role = st.selectbox("Select Role", ["public", "analyst", "law_enforcement"])
+    signup_btn = st.button("Sign Up")
 
-        st.markdown("<h2>&#128274; Login</h2>", unsafe_allow_html=True)
-        username = st.text_input("Username", key="login_username")
-        password = st.text_input("Password", type="password", key="login_password")
-        login_btn = st.button("Login")
+# Load user credentials
+try:
+    with open("users.json", "r+") as f:
+        users_data = json.load(f)
+        if signup_btn:
+            if not new_username or not new_password:
+                st.sidebar.error("Please enter both username and password.")
+            elif new_username in users_data:
+                st.sidebar.error("Username already exists!")
+            else:
+                users_data[new_username] = {
+                    "password": new_password,
+                    "role": new_role
+                }
+                f.seek(0)
+                json.dump(users_data, f, indent=2)
+                f.truncate()
+                st.sidebar.success("Account created successfully! You can now log in.")
+except Exception as e:
+    st.error(f"❌ users.json load failed: {e}")
+    st.stop()
 
-        st.markdown("<div class='signup-divider'></div>", unsafe_allow_html=True)
-        st.subheader("\ud83d\udcdd New User? Sign Up")
-        new_username = st.text_input("New Username", key="signup_username")
-        new_password = st.text_input("New Password", type="password", key="signup_password")
-        new_role = st.selectbox("Select Role", ["public", "analyst", "law_enforcement"], key="signup_role")
-        signup_btn = st.button("Sign Up")
+# Authenticate user
+if login_btn:
+    role = authenticate_user(username, password)
+    if role:
+        st.session_state['logged_in'] = True
+        st.session_state['username'] = username
+        st.session_state['role'] = role
+        st.success(f"Welcome, {username} ({role})")
+    else:
+        st.error("Invalid username or password")
 
-        st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # Load user credentials
-    try:
-        with open("users.json", "r+") as f:
-            users_data = json.load(f)
-            if signup_btn:
-                if not new_username or not new_password:
-                    st.error("Please enter both username and password.")
-                elif new_username in users_data:
-                    st.error("Username already exists!")
-                else:
-                    users_data[new_username] = {
-                        "password": new_password,
-                        "role": new_role
-                    }
-                    f.seek(0)
-                    json.dump(users_data, f, indent=2)
-                    f.truncate()
-                    st.success("Account created successfully! You can now log in.")
-    except Exception as e:
-        st.error(f"\u274c users.json load failed: {e}")
-        st.stop()
-
-    # Authenticate user
-    if login_btn:
-        role = authenticate_user(username, password)
-        if role:
-            st.session_state['logged_in'] = True
-            st.session_state['username'] = username
-            st.session_state['role'] = role
-            st.success(f"Welcome, {username} ({role})")
-            st.experimental_rerun()
-        else:
-            st.error("Invalid username or password")
-
-# Show dashboard only after login
+# After login
 if 'logged_in' in st.session_state and st.session_state['logged_in']:
     role = st.session_state['role']
-    st.title("\ud83d\udcca Crime Pattern Analysis Dashboard")
-    # --- The rest of your dashboard features go here (upload, charts, maps, etc.) ---
-    st.success("Dashboard loaded. Ready to implement remaining features.")
+    st.title("📊 Crime Pattern Analysis Dashboard")
+
+    uploaded_file = st.file_uploader("📂 Upload your Crime Data CSV", type="csv")
+
+    sample_csv = """date,crime_type,latitude,longitude
+2023-01-01,Theft,13.0827,80.2707
+2023-01-02,Assault,13.0829,80.2710"""
+    st.download_button("📥 Download Sample CSV Format", io.BytesIO(sample_csv.encode()), "sample_crime_data.csv")
+
+    if uploaded_file is not None:
+        try:
+            df = pd.read_csv(uploaded_file)
+        except Exception as e:
+            st.error(f"❌ Failed to read uploaded file: {e}")
+            st.stop()
+
+        df.columns = df.columns.str.lower()
+        required_columns = {'date', 'crime_type', 'latitude', 'longitude'}
+        if not required_columns.issubset(df.columns):
+            st.error("❗ Uploaded CSV must contain columns: 'date', 'crime_type', 'latitude', 'longitude'")
+            st.stop()
+
+        try:
+            df['date'] = pd.to_datetime(df['date'])
+        except Exception as e:
+            st.error(f"❗ Couldn't parse 'date' column: {e}")
+            st.stop()
+
+        if role == "public":
+            st.info("Public View: Limited Access")
+            st.subheader("Crime Count by Type")
+            fig = px.bar(df['crime_type'].value_counts().reset_index(),
+                         x='index', y='crime_type',
+                         labels={'index': 'Crime Type', 'crime_type': 'Count'},
+                         title="Crime Frequency by Type")
+            st.plotly_chart(fig)
+
+        elif role == "analyst":
+            st.success("Analyst View: Filter and Export")
+            crime_type = st.selectbox("Select Crime Type", df['crime_type'].unique())
+            filtered = df[df['crime_type'] == crime_type]
+            st.line_chart(filtered['date'].value_counts().sort_index())
+
+            if st.button("Download Filtered Report (CSV)"):
+                filtered.to_csv("filtered_report.csv", index=False)
+                with open("filtered_report.csv", "rb") as f:
+                    st.download_button("Download CSV", f, "report.csv")
+
+        elif role == "law_enforcement":
+            st.success("Law Enforcement View: Full Access")
+            st.subheader("Full Crime Dataset")
+            st.dataframe(df)
+            st.subheader("📍 Crime Map")
+            st.map(df[['latitude', 'longitude']].dropna())
+
+            # Excel Report
+            if st.button("Download Excel Report"):
+                excel_buffer = io.BytesIO()
+                with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                    df.to_excel(writer, index=False, sheet_name="Crime Data")
+                st.download_button("📄 Download Excel", data=excel_buffer.getvalue(), file_name="crime_data.xlsx")
+
+            # PDF Summary
+            if st.button("Download PDF Summary"):
+                from fpdf import FPDF
+                pdf = FPDF()
+                pdf.add_page()
+                pdf.set_font("Arial", size=12)
+                pdf.cell(200, 10, txt="Crime Summary Report", ln=True, align='C')
+                pdf.ln(10)
+
+                summary = df['crime_type'].value_counts().reset_index(name='count')
+                summary.columns = ['crime_type', 'count']
+                for _, row in summary.iterrows():
+                    pdf.cell(200, 10, txt=f"{row['crime_type']}: {row['count']}", ln=True)
+
+                pdf_output = io.BytesIO(pdf.output(dest='S').encode('latin-1'))
+                st.download_button("📄 Download PDF", data=pdf_output, file_name="crime_summary.pdf")
+
+            # Forecasting
+            st.subheader("📈 Predict Future Crime Counts")
+            try:
+                from prophet import Prophet
+
+                forecast_data = df['date'].value_counts().reset_index()
+                forecast_data.columns = ['ds', 'y']
+                forecast_data = forecast_data.sort_values('ds')
+
+                model = Prophet()
+                model.fit(forecast_data)
+
+                future = model.make_future_dataframe(periods=30)
+                forecast = model.predict(future)
+
+                st.success("Prediction for next 30 days")
+                fig = px.line(forecast, x='ds', y='yhat', title="📉 Crime Forecast (Next 30 Days)",
+                              labels={'ds': 'Date', 'yhat': 'Predicted Crime Count'})
+                st.plotly_chart(fig)
+
+            except Exception as e:
+                st.error(f"❌ Forecasting failed: {e}")
+
+            # Hotspot Detection
+            st.subheader("🔥 Crime Hotspot Detection")
+
+            from sklearn.cluster import KMeans
+            location_df = df[['latitude', 'longitude']].dropna()
+
+            if len(location_df) < 3:
+                st.warning("Not enough data for hotspot detection (minimum 3 locations required).")
+            else:
+                k = st.slider("Select number of clusters", min_value=2, max_value=10, value=3)
+                kmeans = KMeans(n_clusters=k, random_state=0)
+                location_df['cluster'] = kmeans.fit_predict(location_df)
+
+                st.success(f"Detected {k} crime hotspots")
+
+                fig = px.scatter_mapbox(location_df,
+                                        lat='latitude', lon='longitude',
+                                        color='cluster', zoom=10,
+                                        mapbox_style="carto-positron",
+                                        title="🗺️ Crime Hotspots via Clustering")
+                st.plotly_chart(fig)
+
+    else:
+        st.warning("⬆️ Please upload a valid CSV file to continue.")
+else:
+    st.warning("🔒 Please log in to access the dashboard.")
