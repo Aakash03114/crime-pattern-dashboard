@@ -1,14 +1,19 @@
 {
-  "public": {
-    "password": "123",
-    "role": "public"
-  },
-  "analyst": {
-    "password": "analyst123",
-    "role": "analyst"
-  },
-  "law": {
-    "password": "law123",
-    "role": "law_enforcement"
-  }
+  "users": [
+    {
+      "username": "public",
+      "password": "9e0f9f78ae7bb91bb55e38fbd8c2a98249d9e87bcdb57722704c8c6f4a0b7c9e",
+      "role": "public"
+    },
+    {
+      "username": "analyst",
+      "password": "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f",
+      "role": "analyst"
+    },
+    {
+      "username": "law",
+      "password": "a1d0c6e83f027327d8461063f4ac58a6a4589be2b8cd839ff1c47199d94df3c0",
+      "role": "law"
+    }
+  ]
 }
