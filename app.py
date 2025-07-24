@@ -46,7 +46,7 @@ if 'logged_in' not in st.session_state or not st.session_state['logged_in']:
     with st.container():
         st.markdown("<div class='login-box'>", unsafe_allow_html=True)
 
-        st.markdown("<h2>\ud83d\udd10 Login</h2>", unsafe_allow_html=True)
+        st.markdown("<h2>&#128274; Login</h2>", unsafe_allow_html=True)
         username = st.text_input("Username", key="login_username")
         password = st.text_input("Password", type="password", key="login_password")
         login_btn = st.button("Login")
