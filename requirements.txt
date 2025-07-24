@@ -1,0 +1,8 @@
+streamlit==1.46.1
+pandas
+plotly
+fpdf
+xlsxwriter
+prophet
+scikit-learn
+
