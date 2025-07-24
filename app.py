@@ -1,71 +1,59 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from utils import authenticate_user, create_user
 import json
 import io
+from utils import authenticate_user, create_user
 
-st.set_page_config(page_title="Crime Pattern Dashboard", layout="wide")
+st.set_page_config(page_title="Crime Dashboard", layout="wide")
 
-# --- Custom CSS Styling ---
-st.markdown("""
-    <style>
-    body {
-        background-color: #f1f3f6;
-    }
-    .st-emotion-cache-1v0mbdj {
-        background-color: #ffffff;
-        border-radius: 10px;
-        padding: 2rem;
-        box-shadow: 0px 0px 10px #ccc;
-        width: 400px;
-        margin: auto;
-        margin-top: 50px;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# --- Session Setup ---
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.username = ""
+    st.session_state.role = ""
 
 # --- Login UI ---
-with st.container():
-    st.markdown('<h2 style="text-align:center;color:#4a4a4a;">🔐 Login</h2>', unsafe_allow_html=True)
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    login_btn = st.button("Login", use_container_width=True)
+def show_login():
+    st.markdown("<h2 style='text-align: center;'>🔐 Login</h2>", unsafe_allow_html=True)
+    st.markdown("<div style='text-align: center;'>Please enter your credentials to continue.</div>", unsafe_allow_html=True)
 
-    st.markdown('<h4 style="text-align:center;color:#4a4a4a;">📝 New User? Sign Up Below</h4>', unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        login_btn = st.button("Login")
+
+        if login_btn:
+            role = authenticate_user(username, password)
+            if role:
+                st.session_state.logged_in = True
+                st.session_state.username = username
+                st.session_state.role = role
+                st.success(f"Welcome, {username} ({role})")
+                st.experimental_rerun()
+            else:
+                st.error("Invalid username or password.")
+
+    st.markdown("---")
+    st.markdown("#### 📝 New User? Sign Up Below")
     new_username = st.text_input("New Username")
     new_password = st.text_input("New Password", type="password")
     new_role = st.selectbox("Select Role", ["public", "analyst", "law_enforcement"])
-    signup_btn = st.button("Sign Up", use_container_width=True)
+    signup_btn = st.button("Sign Up")
 
-# --- User Auth ---
-try:
-    with open("users.json", "r+") as f:
-        users_data = json.load(f)
-        if signup_btn:
-            if not new_username or not new_password:
-                st.error("Please enter both username and password.")
-            elif new_username in users_data["users"]:
-                st.error("Username already exists!")
+    if signup_btn:
+        if not new_username or not new_password:
+            st.warning("Enter both username and password.")
+        else:
+            success = create_user(new_username, new_password, new_role)
+            if success:
+                st.success("Account created! You can now login.")
             else:
-                create_user(new_username, new_password, new_role)
-                st.success("Account created successfully! You can now log in.")
-except Exception as e:
-    st.error(f"❌ users.json load failed: {e}")
-    st.stop()
+                st.error("Username already exists.")
 
-if login_btn:
-    role = authenticate_user(username, password)
-    if role:
-        st.session_state['logged_in'] = True
-        st.session_state['username'] = username
-        st.session_state['role'] = role
-        st.success(f"Welcome, {username} ({role})")
-    else:
-        st.error("Invalid username or password")
-
-# --- Main Dashboard ---
-if 'logged_in' in st.session_state and st.session_state['logged_in']:
+# --- Dashboard after Login ---
+def show_dashboard():
     role = st.session_state['role']
     st.title("📊 Crime Pattern Analysis Dashboard")
 
@@ -81,22 +69,22 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
             df = pd.read_csv(uploaded_file)
         except Exception as e:
             st.error(f"❌ Failed to read uploaded file: {e}")
-            st.stop()
+            return
 
         df.columns = df.columns.str.lower()
         required_columns = {'date', 'crime_type', 'latitude', 'longitude'}
         if not required_columns.issubset(df.columns):
-            st.error("❗ Uploaded CSV must contain columns: 'date', 'crime_type', 'latitude', 'longitude'")
-            st.stop()
+            st.error("❗ Uploaded CSV must contain: 'date', 'crime_type', 'latitude', 'longitude'")
+            return
 
         try:
             df['date'] = pd.to_datetime(df['date'])
         except Exception as e:
-            st.error(f"❗ Couldn't parse 'date' column: {e}")
-            st.stop()
+            st.error(f"❗ Couldn't parse 'date': {e}")
+            return
 
         if role == "public":
-            st.info("Public View: Limited Access")
+            st.info("🔎 Public View: Limited Access")
             st.subheader("Crime Count by Type")
             fig = px.bar(df['crime_type'].value_counts().reset_index(),
                          x='index', y='crime_type',
@@ -105,7 +93,7 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
             st.plotly_chart(fig)
 
         elif role == "analyst":
-            st.success("Analyst View: Filter and Export")
+            st.success("📊 Analyst View: Filter and Export")
             crime_type = st.selectbox("Select Crime Type", df['crime_type'].unique())
             filtered = df[df['crime_type'] == crime_type]
             st.line_chart(filtered['date'].value_counts().sort_index())
@@ -116,7 +104,7 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                     st.download_button("Download CSV", f, "report.csv")
 
         elif role == "law_enforcement":
-            st.success("Law Enforcement View: Full Access")
+            st.success("🛡️ Law Enforcement View: Full Access")
             st.subheader("Full Crime Dataset")
             st.dataframe(df)
             st.subheader("📍 Crime Map")
@@ -137,7 +125,6 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                 pdf.set_font("Arial", size=12)
                 pdf.cell(200, 10, txt="Crime Summary Report", ln=True, align='C')
                 pdf.ln(10)
-
                 summary = df['crime_type'].value_counts().reset_index(name='count')
                 summary.columns = ['crime_type', 'count']
                 for _, row in summary.iterrows():
@@ -162,36 +149,33 @@ if 'logged_in' in st.session_state and st.session_state['logged_in']:
                 forecast = model.predict(future)
 
                 st.success("Prediction for next 30 days")
-                fig = px.line(forecast, x='ds', y='yhat', title="📉 Crime Forecast (Next 30 Days)",
-                              labels={'ds': 'Date', 'yhat': 'Predicted Crime Count'})
+                fig = px.line(forecast, x='ds', y='yhat', title="Crime Forecast (Next 30 Days)",
+                              labels={'ds': 'Date', 'yhat': 'Predicted Count'})
                 st.plotly_chart(fig)
-
             except Exception as e:
                 st.error(f"❌ Forecasting failed: {e}")
 
             # Hotspot Detection
             st.subheader("🔥 Crime Hotspot Detection")
-
             from sklearn.cluster import KMeans
             location_df = df[['latitude', 'longitude']].dropna()
-
             if len(location_df) < 3:
-                st.warning("Not enough data for hotspot detection (minimum 3 locations required).")
+                st.warning("Need at least 3 locations.")
             else:
-                k = st.slider("Select number of clusters", min_value=2, max_value=10, value=3)
+                k = st.slider("Select number of clusters", 2, 10, 3)
                 kmeans = KMeans(n_clusters=k, random_state=0)
                 location_df['cluster'] = kmeans.fit_predict(location_df)
-
-                st.success(f"Detected {k} crime hotspots")
-
                 fig = px.scatter_mapbox(location_df,
                                         lat='latitude', lon='longitude',
                                         color='cluster', zoom=10,
                                         mapbox_style="carto-positron",
-                                        title="🗺️ Crime Hotspots via Clustering")
+                                        title="🗺️ Crime Hotspots")
                 st.plotly_chart(fig)
-
     else:
-        st.warning("⬆️ Please upload a valid CSV file to continue.")
+        st.warning("⬆️ Please upload a valid CSV file.")
+
+# --- Main Routing ---
+if st.session_state.logged_in:
+    show_dashboard()
 else:
-    st.warning("🔒 Please log in to access the dashboard.")
+    show_login()
