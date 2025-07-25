@@ -9,8 +9,9 @@ from fpdf import FPDF
 import base64
 import tempfile
 import datetime
+import plotly.io as pio
 
-st.set_page_config(page_title="Crime Pattern Dashboard", layout="centered")
+st.set_page_config(page_title="Crime Pattern Dashboard", layout="wide")
 
 USERS_FILE = "users.json"
 if not os.path.exists(USERS_FILE):
@@ -24,10 +25,12 @@ if "role" not in st.session_state:
     st.session_state.role = None
 if "username" not in st.session_state:
     st.session_state.username = ""
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
 
 def save_plotly_as_image(fig):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmpfile:
-        fig.write_image(tmpfile.name, format='png',engine="kaleido")
+        fig.write_image(tmpfile.name, format='png', engine="kaleido")
         return tmpfile.name
 
 def generate_pdf_report(df, username, chart_paths=[]):
@@ -47,107 +50,11 @@ def generate_pdf_report(df, username, chart_paths=[]):
         pdf.image(path, w=180)
         pdf.ln(10)
 
-    # Output as a byte stream
     pdf_bytes = BytesIO()
-    pdf_output = pdf.output(dest='S').encode('latin-1')  # Return as bytes
+    pdf_output = pdf.output(dest='S').encode('latin-1')
     pdf_bytes.write(pdf_output)
     pdf_bytes.seek(0)
     return pdf_bytes
-
-def show_dashboard():
-    st.title("📊 Crime Dashboard")
-
-    uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
-    if uploaded_file:
-        df = pd.read_csv(uploaded_file)
-        st.success("CSV uploaded successfully!")
-
-        st.dataframe(df)
-
-        st.subheader("📍 Crime Locations by Type")
-        fig1 = px.histogram(df, x="crime_type", color="latitude", barmode="group")
-        st.plotly_chart(fig1)
-
-        st.subheader("📅 Crimes Over Time")
-        if "Date" in df.columns:
-            df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
-            fig2 = px.line(df, x="Date", y="Crime_Count", color="Location")
-            st.plotly_chart(fig2)import streamlit as st
-import pandas as pd
-import plotly.express as px
-import json
-import os
-import tempfile
-from fpdf import FPDF
-from io import BytesIO
-from utils import authenticate_user, create_user
-from datetime import datetime
-import plotly.io as pio
-
-st.set_page_config(page_title="Crime Pattern Dashboard", layout="wide")
-
-# Load users from file
-with open("users.json") as f:
-    users = json.load(f)["users"]
-
-def save_plotly_as_image(fig):
-    tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-    fig.write_image(tmpfile.name, format='png')
-    return tmpfile.name
-
-def generate_pdf_report(df, username, chart_paths):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt=f"Crime Report for {username}", ln=1, align='C')
-    pdf.cell(200, 10, txt=f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=2, align='C')
-
-    for path in chart_paths:
-        pdf.image(path, w=180)
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
-        pdf.output(tmp_pdf.name)
-        tmp_pdf.seek(0)
-        return tmp_pdf.read()
-
-def show_login():
-    st.markdown("""
-        <div style="display: flex; justify-content: center; align-items: center; height: 100vh;">
-            <div style="background-color: #f0f2f6; padding: 3rem; border-radius: 20px; box-shadow: 0px 0px 10px rgba(0,0,0,0.1); width: 400px;">
-                <h2 style="text-align: center; color: #3366cc;">🔐 Login</h2>
-                <form action="" method="post">
-                    <label for="username">Username</label><br>
-                    <input type="text" name="username" style="width:100%; margin-bottom:10px;"><br>
-                    <label for="password">Password</label><br>
-                    <input type="password" name="password" style="width:100%; margin-bottom:10px;"><br>
-                </form>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    if st.button("Login"):
-        role = authenticate_user(username, password)
-        if role:
-            st.session_state.logged_in = True
-            st.session_state.username = username
-            st.session_state.role = role
-            st.rerun()
-        else:
-            st.error("Invalid username or password")
-
-    st.markdown("### 📝 New User? Sign Up")
-    new_username = st.text_input("Create Username")
-    new_password = st.text_input("Create Password", type="password")
-    new_role = st.selectbox("Select Role", ["public", "analyst", "law_enforcement"])
-    if st.button("Sign Up"):
-        success = create_user(new_username, new_password, new_role)
-        if success:
-            st.success("Account created successfully. Please login.")
-            st.rerun()
-        else:
-            st.error("Username already exists.")
 
 def show_dashboard():
     st.title("🚔 Crime Pattern Analysis Dashboard")
@@ -157,14 +64,12 @@ def show_dashboard():
         df = pd.read_csv(uploaded_file)
         st.success("File uploaded successfully")
 
-        # Filters
         crime_types = st.multiselect("Filter by Crime Type", df["crime_type"].unique())
         if crime_types:
             df = df[df["crime_type"].isin(crime_types)]
 
         st.dataframe(df.head())
 
-        # Visualizations
         st.subheader("📊 Crime Type Distribution")
         fig1 = px.histogram(df, x="crime_type", color="crime_type")
         st.plotly_chart(fig1, use_container_width=True)
@@ -174,33 +79,10 @@ def show_dashboard():
                                  mapbox_style="open-street-map", zoom=10, height=400)
         st.plotly_chart(fig2, use_container_width=True)
 
-        # Export
         chart1_path = save_plotly_as_image(fig1)
         chart2_path = save_plotly_as_image(fig2)
         pdf_bytes = generate_pdf_report(df, st.session_state.username, [chart1_path, chart2_path])
         st.download_button("📄 Download PDF Report", pdf_bytes, file_name="crime_report.pdf")
-
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-if st.session_state.logged_in:
-    show_dashboard()
-else:
-    show_login()
-
-        else:
-            fig2 = None
-            st.warning("No 'Date' column found.")
-
-        # Export options
-        if st.button("📄 Download Report as PDF"):
-            chart1_path = save_plotly_as_image(fig1)
-            chart2_path = save_plotly_as_image(fig2) if fig2 else None
-            pdf_buffer = generate_pdf_report(df, st.session_state.username, [chart1_path, chart2_path] if chart2_path else [chart1_path])
-
-            b64 = base64.b64encode(pdf_buffer.read()).decode()
-            href = f'<a href="data:application/pdf;base64,{b64}" download="crime_report.pdf">📥 Download PDF</a>'
-            st.markdown(href, unsafe_allow_html=True)
 
 def show_login():
     st.markdown("""
@@ -229,6 +111,7 @@ def show_login():
             st.session_state.authenticated = True
             st.session_state.role = role
             st.session_state.username = username
+            st.session_state.logged_in = True
             st.rerun()
         else:
             st.error("Invalid credentials or role mismatch.")
@@ -243,7 +126,6 @@ def show_login():
         else:
             st.warning("Username already exists.")
 
-# Main app flow
 if st.session_state.authenticated:
     show_dashboard()
 else:
