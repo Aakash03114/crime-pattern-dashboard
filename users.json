@@ -1,16 +1,29 @@
 {
-  "users": {
-    "public": {
-      "password": "123",
-      "role": "public"
-    },
-    "analyst": {
-      "password": "analyst123",
-      "role": "analyst"
-    },
-    "law": {
-      "password": "law123",
-      "role": "law_enforcement"
-    }
-  }
+    "users": [
+        {
+            "username": "public",
+            "password": "public123",
+            "role": "public"
+        },
+        {
+            "username": "analyst",
+            "password": "analyst123",
+            "role": "analyst"
+        },
+        {
+            "username": "law",
+            "password": "law123",
+            "role": "law_enforcement"
+        },
+        {
+            "username": "ewq",
+            "password": "321",
+            "role": "law_enforcement"
+        },
+        {
+            "username": "gfd",
+            "password": "12",
+            "role": "law_enforcement"
+        }
+    ]
 }

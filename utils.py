@@ -1,19 +1,40 @@
 import json
+import os
 
-def load_users(file='users.json'):
-    with open(file) as f:
-        return json.load(f)
+USERS_FILE = "users.json"
 
+# Load users
+def load_users():
+    if not os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "w") as f:
+            json.dump({"users": []}, f)
+    with open(USERS_FILE, "r") as f:
+        return json.load(f)["users"]
+
+# Save users
+def save_users(users):
+    with open(USERS_FILE, "w") as f:
+        json.dump({"users": users}, f, indent=4)
+
+# Authenticate user
 def authenticate_user(username, password):
     users = load_users()
-    if username in users["users"] and users["users"][username]["password"] == password:
-        return users["users"][username]["role"]
+    for user in users:
+        if user["username"] == username and user["password"] == password:
+            return user["role"]
     return None
 
-def create_user(username, password, role, file='users.json'):
-    with open(file, 'r+') as f:
-        data = json.load(f)
-        data["users"][username] = {"password": password, "role": role}
-        f.seek(0)
-        json.dump(data, f, indent=2)
-        f.truncate()
+# Create user
+# Create user
+def create_user(username, password, role):
+    users = load_users()
+    if any(user["username"] == username for user in users):
+        return False  # Username exists
+    users.append({
+        "username": username,
+        "password": password,
+        "role": role
+    })
+    save_users(users)  # ✅ Fixed: added closing parenthesis
+    return True
+
