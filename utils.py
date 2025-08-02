@@ -37,4 +37,3 @@ def create_user(username, password, role):
     })
     save_users(users)  # ✅ Fixed: added closing parenthesis
     return True
-
