@@ -34,6 +34,11 @@
             "username": "cxz",
             "password": "1",
             "role": "law_enforcement"
+        },
+        {
+            "username": "qwe1",
+            "password": "1",
+            "role": "law_enforcement"
         }
     ]
 }
