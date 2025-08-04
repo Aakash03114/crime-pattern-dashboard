@@ -24,6 +24,16 @@
             "username": "gfd",
             "password": "12",
             "role": "law_enforcement"
+        },
+        {
+            "username": "qwe",
+            "password": "123",
+            "role": "law_enforcement"
+        },
+        {
+            "username": "cxz",
+            "password": "1",
+            "role": "law_enforcement"
         }
     ]
 }
