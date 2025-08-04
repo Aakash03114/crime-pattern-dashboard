@@ -9,7 +9,8 @@ def load_users():
         with open(USERS_FILE, "w") as f:
             json.dump({"users": []}, f)
     with open(USERS_FILE, "r") as f:
-        return json.load(f)["users"]
+        data = json.load(f)
+    return data.get("users", [])
 
 # Save users
 def save_users(users):
@@ -20,20 +21,19 @@ def save_users(users):
 def authenticate_user(username, password):
     users = load_users()
     for user in users:
-        if user["username"] == username and user["password"] == password:
-            return user["role"]
+        if user.get("username") == username and user.get("password") == password:
+            return user.get("role")
     return None
 
 # Create user
-# Create user
 def create_user(username, password, role):
     users = load_users()
-    if any(user["username"] == username for user in users):
+    if any(user.get("username") == username for user in users):
         return False  # Username exists
     users.append({
         "username": username,
         "password": password,
         "role": role
     })
-    save_users(users)  # ✅ Fixed: added closing parenthesis
+    save_users(users)
     return True
