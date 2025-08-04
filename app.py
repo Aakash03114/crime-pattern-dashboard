@@ -31,16 +31,14 @@ if not os.path.exists("users.json"):
             ]
         }, f, indent=2)
 
-
 def save_plotly_as_image(fig):
     try:
         tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         fig.write_image(tmpfile.name, format="png", engine="kaleido")
         return tmpfile.name
     except Exception as e:
-        st.warning(f"❌ Chart export failed: {e}. Chart will be omitted from PDF.") 
+        st.warning(f"❌ Chart export failed: {e}. Chart will be omitted from PDF.")
         return None
-
 
 def generate_pdf_report(df, username, chart_paths):
     pdf = FPDF()
@@ -78,7 +76,6 @@ def generate_pdf_report(df, username, chart_paths):
     pdf_bytes.write(pdf_output)
     pdf_bytes.seek(0)
     return pdf_bytes
-
 
 def show_login():
     st.markdown(
@@ -124,7 +121,6 @@ def show_login():
                 st.success("Account created. Please log in.")
             else:
                 st.error("Username already exists.")
-
 
 def show_dashboard():
     role = st.session_state.role
@@ -187,9 +183,11 @@ def show_dashboard():
     if role == "public":
         st.info("Public View: aggregated summary")
         st.subheader("Crime by Type")
-        fig = px.bar(df["crime_type"].value_counts().reset_index(),
-                     x="index", y="crime_type",
-                     labels={"index": "Crime Type", "crime_type": "Count"},
+        vc = df["crime_type"].value_counts().reset_index()
+        vc.columns = ["crime_type", "count"]
+        fig = px.bar(vc,
+                     x="crime_type", y="count",
+                     labels={"crime_type": "Crime Type", "count": "Count"},
                      title="Crime Frequency by Type")
         st.plotly_chart(fig, use_container_width=True)
 
@@ -227,11 +225,9 @@ def show_dashboard():
                 future = model.make_future_dataframe(periods=30)
                 forecast = model.predict(future)
 
-                # Build forecast plot with interval
                 fig_forecast = px.line(forecast, x="ds", y="yhat",
-                                       labels={"ds": "Date", "yhat": "Predicted Crime Count"},
-                                       title="Forecast with Confidence Interval")
-                # Confidence band
+                                      labels={"ds": "Date", "yhat": "Predicted Crime Count"},
+                                      title="Forecast with Confidence Interval")
                 fig_forecast.add_traces([
                     dict(
                         x=list(forecast["ds"]) + list(forecast["ds"][::-1]),
@@ -243,9 +239,8 @@ def show_dashboard():
                         name="Confidence Interval"
                     )
                 ])
-                # Actuals overlay
                 fig_forecast.add_scatter(x=ts["ds"], y=ts["y"], mode="markers+lines",
-                                        name="Historical", marker=dict(size=6))
+                                         name="Historical", marker=dict(size=6))
 
                 st.plotly_chart(fig_forecast, use_container_width=True)
         except Exception as e:
@@ -277,13 +272,14 @@ def show_dashboard():
         chart_paths = []
         # include summary trend and forecast if exists
         # regenerate key charts for PDF
-        bar_chart = px.bar(df["crime_type"].value_counts().reset_index(),
-                           x="index", y="crime_type",
-                           labels={"index": "Crime Type", "crime_type": "Count"},
+        vc = df["crime_type"].value_counts().reset_index()
+        vc.columns = ["crime_type", "count"]
+        bar_chart = px.bar(vc,
+                           x="crime_type", y="count",
+                           labels={"crime_type": "Crime Type", "count": "Count"},
                            title="Crime Frequency by Type")
         chart_paths.append(save_plotly_as_image(bar_chart))
 
-        # Forecast chart if available
         try:
             if "fig_forecast" in locals():
                 chart_paths.append(save_plotly_as_image(fig_forecast))
@@ -294,7 +290,6 @@ def show_dashboard():
             pdf_bytes = generate_pdf_report(df, st.session_state.username, chart_paths)
             st.download_button("Download PDF", pdf_bytes, file_name="crime_report.pdf")
 
-    # Shared summary for all roles (optional)
     st.markdown("## Summary Metrics")
     cols = st.columns(3)
     total_crimes = len(df)
@@ -303,7 +298,6 @@ def show_dashboard():
     cols[0].metric("Total Incidents", total_crimes)
     cols[1].metric("Crime Types", unique_types)
     cols[2].metric("Date Range", date_span)
-
 
 # Main flow
 if st.session_state.logged_in:
