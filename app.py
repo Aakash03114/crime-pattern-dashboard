@@ -34,7 +34,7 @@ if not os.path.exists("users.json"):
 def save_plotly_as_image(fig):
     try:
         tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-        fig.write_image(tmpfile.name, format="png")
+        fig.write_image(tmpfile.name, format="png", engine="kaleido")
         return tmpfile.name
     except Exception as e:
         st.warning(f"❌ Chart export failed: {e}. Chart will be omitted from PDF.")

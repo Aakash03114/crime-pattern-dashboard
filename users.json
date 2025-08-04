@@ -39,6 +39,11 @@
             "username": "qwe1",
             "password": "1",
             "role": "law_enforcement"
+        },
+        {
+            "username": "asd",
+            "password": "1",
+            "role": "law_enforcement"
         }
     ]
 }
