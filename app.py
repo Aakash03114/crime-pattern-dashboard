@@ -139,7 +139,7 @@ def show_dashboard():
 
     uploaded_file = st.file_uploader(
         "Upload Crime Data File (CSV, Excel, or PDF)",
-        type=["csv", "xlsx", "xls", "pdf"],
+        type=["csv", "xlsx", "xls"],
     )
 
     if uploaded_file is None:
@@ -152,17 +152,6 @@ def show_dashboard():
             df = pd.read_csv(uploaded_file)
         elif fname.endswith((".xls", ".xlsx")):
             df = pd.read_excel(uploaded_file)
-        elif fname.endswith(".pdf"):
-            import tabula
-            pdf_dfs = tabula.read_pdf(uploaded_file, pages='all', multiple_tables=True, stream=True)
-            df = None
-            for pdf_df in pdf_dfs:
-                if all(col.lower() in pdf_df.columns.str.lower() for col in ['date', 'crime_type', 'latitude', 'longitude']):
-                    df = pdf_df
-                    break
-            if df is None:
-                st.error('Unable to extract valid table from PDF. Please ensure columns: date, crime_type, latitude, longitude.')
-                return
         else:
             st.error("Unsupported file type.")
             return
