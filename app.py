@@ -179,14 +179,12 @@ def show_dashboard():
         start, end = date_range
         df = df[(df["date"].dt.date >= start) & (df["date"].dt.date <= end)]
 
-    # Views by role
     if role == "public":
         st.info("Public View: aggregated summary")
         st.subheader("Crime by Type")
         vc = df["crime_type"].value_counts().reset_index()
         vc.columns = ["crime_type", "count"]
-        fig = px.bar(vc,
-                     x="crime_type", y="count",
+        fig = px.bar(vc, x="crime_type", y="count",
                      labels={"crime_type": "Crime Type", "count": "Count"},
                      title="Crime Frequency by Type")
         st.plotly_chart(fig, use_container_width=True)
@@ -204,14 +202,26 @@ def show_dashboard():
         st.subheader("Raw Data")
         st.dataframe(df)
 
-        st.subheader("Crime Map")
-        st.map(df[["latitude", "longitude"]].dropna())
+        st.subheader("Crime Map (Differentiated by Crime Type)")
+        map_df = df.dropna(subset=["latitude", "longitude", "crime_type"])
+        if not map_df.empty:
+            fig_map = px.scatter_mapbox(
+                map_df,
+                lat="latitude",
+                lon="longitude",
+                color="crime_type",
+                hover_name="crime_type",
+                zoom=10,
+                mapbox_style="carto-positron",
+                title="Crime Incidents by Type"
+            )
+            st.plotly_chart(fig_map, use_container_width=True)
+        else:
+            st.info("No location data to display.")
 
-        # Forecasting with confidence interval
         st.subheader("📈 Crime Forecast (Next 30 Days)")
         try:
             from prophet import Prophet
-
             ts = df.groupby(df["date"].dt.floor("d")).size().reset_index(name="y")
             ts.rename(columns={"date": "ds"}, inplace=True)
             ts = ts.sort_values("ds")
@@ -221,7 +231,6 @@ def show_dashboard():
             else:
                 model = Prophet()
                 model.fit(ts)
-
                 future = model.make_future_dataframe(periods=30)
                 forecast = model.predict(future)
 
@@ -246,11 +255,9 @@ def show_dashboard():
         except Exception as e:
             st.error(f"Forecasting failed: {e}")
 
-        # Hotspot detection
         st.subheader("🔥 Crime Hotspot Detection")
         try:
             from sklearn.cluster import KMeans
-
             loc_df = df[["latitude", "longitude"]].dropna()
             if len(loc_df) >= 3:
                 k = st.slider("Cluster count", 2, 8, 3)
@@ -267,15 +274,11 @@ def show_dashboard():
         except Exception as e:
             st.error(f"Hotspot detection error: {e}")
 
-        # Report generation
         st.subheader("📄 Export Report")
         chart_paths = []
-        # include summary trend and forecast if exists
-        # regenerate key charts for PDF
         vc = df["crime_type"].value_counts().reset_index()
         vc.columns = ["crime_type", "count"]
-        bar_chart = px.bar(vc,
-                           x="crime_type", y="count",
+        bar_chart = px.bar(vc, x="crime_type", y="count",
                            labels={"crime_type": "Crime Type", "count": "Count"},
                            title="Crime Frequency by Type")
         chart_paths.append(save_plotly_as_image(bar_chart))

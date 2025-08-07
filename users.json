@@ -44,6 +44,16 @@
             "username": "asd",
             "password": "1",
             "role": "law_enforcement"
+        },
+        {
+            "username": "hgf",
+            "password": "1",
+            "role": "law_enforcement"
+        },
+        {
+            "username": "rty",
+            "password": "1",
+            "role": "law_enforcement"
         }
     ]
 }
