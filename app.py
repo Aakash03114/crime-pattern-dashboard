@@ -122,6 +122,208 @@ def show_login():
             else:
                 st.error("Username already exists.")
 
+def show_dashboard():
+    role = st.session_state.role
+    st.sidebar.markdown(f"*Logged in as:* {st.session_state.username} ({role})")
+    if st.sidebar.button("Logout"):
+        st.session_state.logged_in = False
+        st.session_state.username = ""
+        st.session_state.role = ""
+        try:
+            st.experimental_rerun()
+        except AttributeError:
+            pass
+        return
+
+    st.title("🚔 Crime Pattern Analysis Dashboard")
+
+    uploaded_file = st.file_uploader(
+        "Upload Crime Data File (CSV, Excel, or PDF)",
+        type=["csv", "xlsx", "xls", "pdf"],
+    )
+
+    if uploaded_file is None:
+        st.info("Please upload a CSV, Excel, or PDF file with columns: date, crime_type, latitude, longitude.")
+        return
+
+    try:
+        fname = uploaded_file.name.lower()
+        if fname.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+        elif fname.endswith((".xls", ".xlsx")):
+            df = pd.read_excel(uploaded_file)
+        elif fname.endswith(".pdf"):
+            import tabula
+            pdf_dfs = tabula.read_pdf(uploaded_file, pages='all', multiple_tables=True, stream=True)
+            df = None
+            for pdf_df in pdf_dfs:
+                if all(col.lower() in pdf_df.columns.str.lower() for col in ['date', 'crime_type', 'latitude', 'longitude']):
+                    df = pdf_df
+                    break
+            if df is None:
+                st.error('Unable to extract valid table from PDF. Please ensure columns: date, crime_type, latitude, longitude.')
+                return
+        else:
+            st.error("Unsupported file type.")
+            return
+    except Exception as e:
+        st.error(f"Failed to read file: {e}")
+        return
+
+    df.columns = df.columns.str.lower()
+    required = {"date", "crime_type", "latitude", "longitude"}
+    if not required.issubset(df.columns):
+        st.error("File must contain: date, crime_type, latitude, longitude")
+        return
+
+    # Preprocessing
+    df = df.drop_duplicates()
+    try:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    except Exception:
+        pass
+    df = df.dropna(subset=["date", "latitude", "longitude", "crime_type"])
+
+    # Filters
+    st.sidebar.subheader("Filters")
+    crime_types = st.sidebar.multiselect("Crime Type", sorted(df["crime_type"].unique()))
+    date_range = st.sidebar.date_input("Date range", [df["date"].min().date(), df["date"].max().date()])
+
+    if crime_types:
+        df = df[df["crime_type"].isin(crime_types)]
+    if len(date_range) == 2:
+        start, end = date_range
+        df = df[(df["date"].dt.date >= start) & (df["date"].dt.date <= end)]
+
+    # Views by role
+    if role == "public":
+        st.info("Public View: aggregated summary")
+        st.subheader("Crime by Type")
+        vc = df["crime_type"].value_counts().reset_index()
+        vc.columns = ["crime_type", "count"]
+        fig = px.bar(vc, x="crime_type", y="count",
+                     labels={"crime_type": "Crime Type", "count": "Count"},
+                     title="Crime Frequency by Type")
+        st.plotly_chart(fig, use_container_width=True)
+
+    elif role == "analyst":
+        st.success("Analyst View")
+        st.subheader("Trend Over Time")
+        daily = df.groupby(df["date"].dt.floor("d")).size().reset_index(name="count")
+        fig_trend = px.line(daily, x="date", y="count", title="Daily Crime Trend",
+                            labels={"date": "Date", "count": "Crime Count"})
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+    elif role == "law_enforcement":
+        st.success("Law Enforcement View: Full Access")
+        st.subheader("Raw Data")
+        st.dataframe(df)
+
+        # Crime Map differentiated by crime type
+        st.subheader("Crime Map (Differentiated by Crime Type)")
+        map_df = df.dropna(subset=["latitude", "longitude", "crime_type"])
+        if not map_df.empty:
+            fig_map = px.scatter_mapbox(map_df,
+                                        lat="latitude",
+                                        lon="longitude",
+                                        color="crime_type",
+                                        hover_name="crime_type",
+                                        zoom=10,
+                                        mapbox_style="carto-positron",
+                                        title="Crime Incidents by Type")
+            st.plotly_chart(fig_map, use_container_width=True)
+        else:
+            st.info("No location data to display.")
+
+        # Forecasting with confidence interval
+        st.subheader("📈 Crime Forecast (Next 30 Days)")
+        try:
+            from prophet import Prophet
+
+            ts = df.groupby(df["date"].dt.floor("d")).size().reset_index(name="y")
+            ts.rename(columns={"date": "ds"}, inplace=True)
+            ts = ts.sort_values("ds")
+
+            if len(ts) < 2:
+                st.warning("Not enough historical data to forecast.")
+            else:
+                model = Prophet()
+                model.fit(ts)
+
+                future = model.make_future_dataframe(periods=30)
+                forecast = model.predict(future)
+
+                fig_forecast = px.line(forecast, x="ds", y="yhat",
+                                      labels={"ds": "Date", "yhat": "Predicted Crime Count"},
+                                      title="Forecast with Confidence Interval")
+                fig_forecast.add_traces([
+                    dict(
+                        x=list(forecast["ds"]) + list(forecast["ds"][::-1]),
+                        y=list(forecast["yhat_upper"]) + list(forecast["yhat_lower"][::-1]),
+                        fill="toself",
+                        fillcolor="rgba(0,123,255,0.2)",
+                        line=dict(color="rgba(255,255,255,0)"),
+                        hoverinfo="skip",
+                        name="Confidence Interval"
+                    )
+                ])
+                fig_forecast.add_scatter(x=ts["ds"], y=ts["y"], mode="markers+lines",
+                                         name="Historical", marker=dict(size=6))
+                st.plotly_chart(fig_forecast, use_container_width=True)
+        except Exception as e:
+            st.error(f"Forecasting failed: {e}")
+
+        # Hotspot detection
+        st.subheader("🔥 Crime Hotspot Detection")
+        try:
+            from sklearn.cluster import KMeans
+
+            loc_df = df[["latitude", "longitude"]].dropna()
+            if len(loc_df) >= 3:
+                k = st.slider("Cluster count", 2, 8, 3)
+                kmeans = KMeans(n_clusters=k, random_state=0)
+                loc_df = loc_df.copy()
+                loc_df["cluster"] = kmeans.fit_predict(loc_df)
+                fig_hot = px.scatter_mapbox(loc_df, lat="latitude", lon="longitude",
+                                            color="cluster", zoom=10,
+                                            mapbox_style="carto-positron",
+                                            title="Crime Hotspots")
+                st.plotly_chart(fig_hot, use_container_width=True)
+            else:
+                st.warning("Need at least 3 points for hotspot detection.")
+        except Exception as e:
+            st.error(f"Hotspot detection error: {e}")
+
+        # Report generation
+        st.subheader("📄 Export Report")
+        chart_paths = []
+        vc = df["crime_type"].value_counts().reset_index()
+        vc.columns = ["crime_type", "count"]
+        bar_chart = px.bar(vc, x="crime_type", y="count",
+                           labels={"crime_type": "Crime Type", "count": "Count"},
+                           title="Crime Frequency by Type")
+        chart_paths.append(save_plotly_as_image(bar_chart))
+
+        try:
+            if "fig_forecast" in locals():
+                chart_paths.append(save_plotly_as_image(fig_forecast))
+        except:
+            pass
+
+        if st.button("Download PDF Report"):
+            pdf_bytes = generate_pdf_report(df, st.session_state.username, chart_paths)
+            st.download_button("Download PDF", pdf_bytes, file_name="crime_report.pdf")
+
+    st.markdown("## Summary Metrics")
+    cols = st.columns(3)
+    total_crimes = len(df)
+    unique_types = df["crime_type"].nunique()
+    date_span = f"{df['date'].min().date()} to {df['date'].max().date()}"
+    cols[0].metric("Total Incidents", total_crimes)
+    cols[1].metric("Crime Types", unique_types)
+    cols[2].metric("Date Range", date_span)
+
+
 # Main flow
 if st.session_state.logged_in:
     show_dashboard()
