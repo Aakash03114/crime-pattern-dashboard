@@ -31,6 +31,7 @@ if not os.path.exists("users.json"):
             ]
         }, f, indent=2)
 
+
 def save_plotly_as_image(fig):
     try:
         tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
@@ -39,6 +40,7 @@ def save_plotly_as_image(fig):
     except Exception as e:
         st.warning(f"❌ Chart export failed: {e}. Chart will be omitted from PDF.")
         return None
+
 
 def generate_pdf_report(df, username, chart_paths):
     pdf = FPDF()
@@ -76,6 +78,7 @@ def generate_pdf_report(df, username, chart_paths):
     pdf_bytes.write(pdf_output)
     pdf_bytes.seek(0)
     return pdf_bytes
+
 
 def show_login():
     st.markdown(
@@ -121,6 +124,7 @@ def show_login():
                 st.success("Account created. Please log in.")
             else:
                 st.error("Username already exists.")
+
 
 def show_dashboard():
     role = st.session_state.role
@@ -198,9 +202,36 @@ def show_dashboard():
     elif role == "analyst":
         st.success("Analyst View")
         st.subheader("Trend Over Time")
-        daily = df.groupby(df["date"].dt.floor("d")).size().reset_index(name="count")
-        fig_trend = px.line(daily, x="date", y="count", title="Daily Crime Trend",
-                            labels={"date": "Date", "count": "Crime Count"})
+        
+        # Add a selector for the time period
+        period = st.radio(
+            "Select trend interval", 
+            ["Daily", "Weekly", "Monthly"], 
+            index=0,
+            horizontal=True
+        )
+        
+        if period == "Daily":
+            # Group by day
+            trend_df = df.groupby(df["date"].dt.date).size().reset_index(name="count")
+            x_label = "Day"
+        elif period == "Weekly":
+            # Group by year-week
+            trend_df = df.groupby(df["date"].dt.to_period("W")).size().reset_index(name="count")
+            trend_df["date"] = trend_df["date"].astype(str)
+            x_label = "Week"
+        elif period == "Monthly":
+            # Group by year-month
+            trend_df = df.groupby(df["date"].dt.to_period("M")).size().reset_index(name="count")
+            trend_df["date"] = trend_df["date"].astype(str)
+            x_label = "Month"
+        
+        fig_trend = px.line(
+            trend_df, x="date", y="count",
+            title=f"Crime Trend ({period})",
+            labels={"date": x_label, "count": "Crime Count"},
+            markers=True
+        )
         st.plotly_chart(fig_trend, use_container_width=True)
 
     elif role == "law_enforcement":
