@@ -207,24 +207,30 @@ def show_dashboard():
     if len(unique_hours) > 1:
         min_hour, max_hour = int(df["hour"].min()), int(df["hour"].max())
         hour_range = st.sidebar.slider(
-            "Hour Range", min_hour, max_hour, (min_hour, max_hour), step=1
+            "Hour Range",
+            min_hour,
+            max_hour,
+            (min_hour, max_hour),
+            step=1,
         )
         df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
     else:
-        st.sidebar.info(f"All records are at hour {unique_hours[0]}. No hour filter applied.")
+        st.sidebar.info(f"All records are hour {unique_hours}. No hour filter applied.")
+
 
 
     # Region (city/district/region) filter
     possible_region_cols = [
-        col for col in df.columns if col.lower() in ["region", "city", "district"]
-    ]
-    if possible_region_cols:
-        region_col = possible_region_cols
-        unique_regions = sorted(df[region_col].dropna().unique())
-        selected_regions = st.sidebar.multiselect(
-            "Region", unique_regions, default=unique_regions
-        )
-        df = df[df[region_col].isin(selected_regions)]
+    col for col in df.columns if col.lower() in ["region", "city", "district"]
+]
+if possible_region_cols:
+    region_col = possible_region_cols   # Always get only the column name
+    unique_regions = sorted(df[region_col].dropna().unique())
+    selected_regions = st.sidebar.multiselect(
+        "Region", unique_regions, default=unique_regions
+    )
+    df = df[df[region_col].isin(selected_regions)]
+
 
     # Views by role
     if role == "public":
