@@ -142,12 +142,14 @@ def show_dashboard():
     st.title("🚔 Crime Pattern Analysis Dashboard")
 
     uploaded_file = st.file_uploader(
-        "Upload Crime Data File (CSV, Excel, or PDF)",
+        "Upload Crime Data File (CSV or Excel)",
         type=["csv", "xlsx", "xls"],
     )
 
     if uploaded_file is None:
-        st.info("Please upload a CSV, Excel, or PDF file with columns: date, crime_type, latitude, longitude.")
+        st.info(
+            "Please upload a CSV or Excel file with columns: date, crime_type, latitude, longitude."
+        )
         return
 
     try:
@@ -178,15 +180,46 @@ def show_dashboard():
     df = df.dropna(subset=["date", "latitude", "longitude", "crime_type"])
 
     # Filters
-    st.sidebar.subheader("Filters")
-    crime_types = st.sidebar.multiselect("Crime Type", sorted(df["crime_type"].unique()))
-    date_range = st.sidebar.date_input("Date range", [df["date"].min().date(), df["date"].max().date()])
+    # Crime type filter
+    if "crime_type" in df.columns:
+        crime_types = st.sidebar.multiselect(
+            "Crime Type",
+            sorted(df["crime_type"].dropna().unique()),
+            default=sorted(df["crime_type"].dropna().unique()),
+        )
+        if crime_types:
+            df = df[df["crime_type"].isin(crime_types)]
 
-    if crime_types:
-        df = df[df["crime_type"].isin(crime_types)]
-    if len(date_range) == 2:
-        start, end = date_range
-        df = df[(df["date"].dt.date >= start) & (df["date"].dt.date <= end)]
+    # Date range filter
+    if "date" in df.columns:
+        date_range = st.sidebar.date_input(
+            "Date Range",
+            [df["date"].min().date(), df["date"].max().date()],
+        )
+        if len(date_range) == 2:
+            start, end = date_range
+            df = df[(df["date"].dt.date >= start) & (df["date"].dt.date <= end)]
+
+    # Time (hour) filter
+    if "date" in df.columns:
+        df["hour"] = df["date"].dt.hour
+        min_hour, max_hour = int(df["hour"].min()), int(df["hour"].max())
+        hour_range = st.sidebar.slider(
+            "Hour Range", min_hour, max_hour, (min_hour, max_hour), step=1
+        )
+        df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
+
+    # Region (city/district/region) filter
+    possible_region_cols = [
+        col for col in df.columns if col.lower() in ["region", "city", "district"]
+    ]
+    if possible_region_cols:
+        region_col = possible_region_cols
+        unique_regions = sorted(df[region_col].dropna().unique())
+        selected_regions = st.sidebar.multiselect(
+            "Region", unique_regions, default=unique_regions
+        )
+        df = df[df[region_col].isin(selected_regions)]
 
     # Views by role
     if role == "public":
@@ -194,43 +227,43 @@ def show_dashboard():
         st.subheader("Crime by Type")
         vc = df["crime_type"].value_counts().reset_index()
         vc.columns = ["crime_type", "count"]
-        fig = px.bar(vc, x="crime_type", y="count",
-                     labels={"crime_type": "Crime Type", "count": "Count"},
-                     title="Crime Frequency by Type")
+        fig = px.bar(
+            vc,
+            x="crime_type",
+            y="count",
+            labels={"crime_type": "Crime Type", "count": "Count"},
+            title="Crime Frequency by Type",
+        )
         st.plotly_chart(fig, use_container_width=True)
 
     elif role == "analyst":
         st.success("Analyst View")
         st.subheader("Trend Over Time")
-        
+
         # Add a selector for the time period
         period = st.radio(
-            "Select trend interval", 
-            ["Daily", "Weekly", "Monthly"], 
-            index=0,
-            horizontal=True
+            "Select trend interval", ["Daily", "Weekly", "Monthly"], index=0, horizontal=True
         )
-        
+
         if period == "Daily":
-            # Group by day
             trend_df = df.groupby(df["date"].dt.date).size().reset_index(name="count")
             x_label = "Day"
         elif period == "Weekly":
-            # Group by year-week
             trend_df = df.groupby(df["date"].dt.to_period("W")).size().reset_index(name="count")
             trend_df["date"] = trend_df["date"].astype(str)
             x_label = "Week"
         elif period == "Monthly":
-            # Group by year-month
             trend_df = df.groupby(df["date"].dt.to_period("M")).size().reset_index(name="count")
             trend_df["date"] = trend_df["date"].astype(str)
             x_label = "Month"
-        
+
         fig_trend = px.line(
-            trend_df, x="date", y="count",
+            trend_df,
+            x="date",
+            y="count",
             title=f"Crime Trend ({period})",
             labels={"date": x_label, "count": "Crime Count"},
-            markers=True
+            markers=True,
         )
         st.plotly_chart(fig_trend, use_container_width=True)
 
@@ -243,14 +276,16 @@ def show_dashboard():
         st.subheader("Crime Map (Differentiated by Crime Type)")
         map_df = df.dropna(subset=["latitude", "longitude", "crime_type"])
         if not map_df.empty:
-            fig_map = px.scatter_mapbox(map_df,
-                                        lat="latitude",
-                                        lon="longitude",
-                                        color="crime_type",
-                                        hover_name="crime_type",
-                                        zoom=10,
-                                        mapbox_style="carto-positron",
-                                        title="Crime Incidents by Type")
+            fig_map = px.scatter_mapbox(
+                map_df,
+                lat="latitude",
+                lon="longitude",
+                color="crime_type",
+                hover_name="crime_type",
+                zoom=10,
+                mapbox_style="carto-positron",
+                title="Crime Incidents by Type",
+            )
             st.plotly_chart(fig_map, use_container_width=True)
         else:
             st.info("No location data to display.")
@@ -273,22 +308,30 @@ def show_dashboard():
                 future = model.make_future_dataframe(periods=30)
                 forecast = model.predict(future)
 
-                fig_forecast = px.line(forecast, x="ds", y="yhat",
-                                      labels={"ds": "Date", "yhat": "Predicted Crime Count"},
-                                      title="Forecast with Confidence Interval")
-                fig_forecast.add_traces([
-                    dict(
-                        x=list(forecast["ds"]) + list(forecast["ds"][::-1]),
-                        y=list(forecast["yhat_upper"]) + list(forecast["yhat_lower"][::-1]),
-                        fill="toself",
-                        fillcolor="rgba(0,123,255,0.2)",
-                        line=dict(color="rgba(255,255,255,0)"),
-                        hoverinfo="skip",
-                        name="Confidence Interval"
-                    )
-                ])
-                fig_forecast.add_scatter(x=ts["ds"], y=ts["y"], mode="markers+lines",
-                                         name="Historical", marker=dict(size=6))
+                fig_forecast = px.line(
+                    forecast,
+                    x="ds",
+                    y="yhat",
+                    labels={"ds": "Date", "yhat": "Predicted Crime Count"},
+                    title="Forecast with Confidence Interval",
+                )
+                fig_forecast.add_traces(
+                    [
+                        dict(
+                            x=list(forecast["ds"]) + list(forecast["ds"][::-1]),
+                            y=list(forecast["yhat_upper"]) + list(forecast["yhat_lower"][::-1]),
+                            fill="toself",
+                            fillcolor="rgba(0,123,255,0.2)",
+                            line=dict(color="rgba(255,255,255,0)"),
+                            hoverinfo="skip",
+                            name="Confidence Interval",
+                        )
+                    ]
+                )
+                fig_forecast.add_scatter(
+                    x=ts["ds"], y=ts["y"], mode="markers+lines",
+                    name="Historical", marker=dict(size=6)
+                )
                 st.plotly_chart(fig_forecast, use_container_width=True)
         except Exception as e:
             st.error(f"Forecasting failed: {e}")
@@ -304,10 +347,15 @@ def show_dashboard():
                 kmeans = KMeans(n_clusters=k, random_state=0)
                 loc_df = loc_df.copy()
                 loc_df["cluster"] = kmeans.fit_predict(loc_df)
-                fig_hot = px.scatter_mapbox(loc_df, lat="latitude", lon="longitude",
-                                            color="cluster", zoom=10,
-                                            mapbox_style="carto-positron",
-                                            title="Crime Hotspots")
+                fig_hot = px.scatter_mapbox(
+                    loc_df,
+                    lat="latitude",
+                    lon="longitude",
+                    color="cluster",
+                    zoom=10,
+                    mapbox_style="carto-positron",
+                    title="Crime Hotspots",
+                )
                 st.plotly_chart(fig_hot, use_container_width=True)
             else:
                 st.warning("Need at least 3 points for hotspot detection.")
@@ -319,19 +367,25 @@ def show_dashboard():
         chart_paths = []
         vc = df["crime_type"].value_counts().reset_index()
         vc.columns = ["crime_type", "count"]
-        bar_chart = px.bar(vc, x="crime_type", y="count",
-                           labels={"crime_type": "Crime Type", "count": "Count"},
-                           title="Crime Frequency by Type")
+        bar_chart = px.bar(
+            vc,
+            x="crime_type",
+            y="count",
+            labels={"crime_type": "Crime Type", "count": "Count"},
+            title="Crime Frequency by Type",
+        )
         chart_paths.append(save_plotly_as_image(bar_chart))
 
         try:
             if "fig_forecast" in locals():
                 chart_paths.append(save_plotly_as_image(fig_forecast))
-        except:
+        except Exception:
             pass
 
         if st.button("Download PDF Report"):
-            pdf_bytes = generate_pdf_report(df, st.session_state.username, chart_paths)
+            pdf_bytes = generate_pdf_report(
+                df, st.session_state.username, chart_paths
+            )
             st.download_button("Download PDF", pdf_bytes, file_name="crime_report.pdf")
 
     st.markdown("## Summary Metrics")
@@ -349,3 +403,4 @@ if st.session_state.logged_in:
     show_dashboard()
 else:
     show_login()
+
