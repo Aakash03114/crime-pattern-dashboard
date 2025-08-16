@@ -220,11 +220,9 @@ def show_dashboard():
 
 
     # Region (city/district/region) filter
-    possible_region_cols = [
-    col for col in df.columns if col.lower() in ["region", "city", "district"]
-]
+possible_region_cols = [col for col in df.columns if col.lower() in ["region", "city", "district"]]
 if possible_region_cols:
-    region_col = possible_region_cols   # Always get only the column name
+    region_col = possible_region_cols[0]   # Always get the *column name*, not the list
     unique_regions = sorted(df[region_col].dropna().unique())
     selected_regions = st.sidebar.multiselect(
         "Region", unique_regions, default=unique_regions
