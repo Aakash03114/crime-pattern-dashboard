@@ -215,14 +215,14 @@ def show_dashboard():
             st.sidebar.info(f"All records are hour {unique_hours}. No hour filter applied.")
 
    # Region (city/district/region) filter
-possible_region_cols = [col for col in df.columns if col.lower() in ["region", "city", "district"]]
-if possible_region_cols:
-    region_col = possible_region_cols   # Always get the *column name*
-    unique_regions = sorted(df[region_col].dropna().unique())
-    selected_regions = st.sidebar.multiselect(
-        "Region", unique_regions, default=unique_regions
-    )
-    df = df[df[region_col].isin(selected_regions)]
+    possible_region_cols = [col for col in df.columns if col.lower() in ["region", "city", "district"]]
+    if possible_region_cols:
+        region_col = possible_region_cols   # Always get the *column name*
+        unique_regions = sorted(df[region_col].dropna().unique())
+        selected_regions = st.sidebar.multiselect(
+            "Region", unique_regions, default=unique_regions
+            )
+        df = df[df[region_col].isin(selected_regions)]
 
 
     # Views by role
