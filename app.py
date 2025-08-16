@@ -203,11 +203,16 @@ def show_dashboard():
     # Time (hour) filter
     if "date" in df.columns:
         df["hour"] = df["date"].dt.hour
+    unique_hours = df["hour"].dropna().unique()
+    if len(unique_hours) > 1:
         min_hour, max_hour = int(df["hour"].min()), int(df["hour"].max())
         hour_range = st.sidebar.slider(
             "Hour Range", min_hour, max_hour, (min_hour, max_hour), step=1
         )
         df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
+    else:
+        st.sidebar.info(f"All records are at hour {unique_hours[0]}. No hour filter applied.")
+
 
     # Region (city/district/region) filter
     possible_region_cols = [
