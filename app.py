@@ -31,7 +31,6 @@ if not os.path.exists("users.json"):
             ]
         }, f, indent=2)
 
-
 def save_plotly_as_image(fig):
     try:
         tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
@@ -40,7 +39,6 @@ def save_plotly_as_image(fig):
     except Exception as e:
         st.warning(f"❌ Chart export failed: {e}. Chart will be omitted from PDF.")
         return None
-
 
 def generate_pdf_report(df, username, chart_paths):
     pdf = FPDF()
@@ -78,7 +76,6 @@ def generate_pdf_report(df, username, chart_paths):
     pdf_bytes.write(pdf_output)
     pdf_bytes.seek(0)
     return pdf_bytes
-
 
 def show_login():
     st.markdown(
@@ -124,7 +121,6 @@ def show_login():
                 st.success("Account created. Please log in.")
             else:
                 st.error("Username already exists.")
-
 
 def show_dashboard():
     role = st.session_state.role
@@ -179,7 +175,8 @@ def show_dashboard():
         pass
     df = df.dropna(subset=["date", "latitude", "longitude", "crime_type"])
 
-    # Filters
+    # --- Sidebar Filters (Crime Type, Date, Hour, Region) ---
+
     # Crime type filter
     if "crime_type" in df.columns:
         crime_types = st.sidebar.multiselect(
@@ -203,32 +200,29 @@ def show_dashboard():
     # Time (hour) filter
     if "date" in df.columns:
         df["hour"] = df["date"].dt.hour
-    unique_hours = df["hour"].dropna().unique()
-    if len(unique_hours) > 1:
-        min_hour, max_hour = int(df["hour"].min()), int(df["hour"].max())
-        hour_range = st.sidebar.slider(
-            "Hour Range",
-            min_hour,
-            max_hour,
-            (min_hour, max_hour),
-            step=1,
-        )
-        df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
-    else:
-        st.sidebar.info(f"All records are hour {unique_hours}. No hour filter applied.")
-
-
+        unique_hours = df["hour"].dropna().unique()
+        if len(unique_hours) > 1:
+            min_hour, max_hour = int(df["hour"].min()), int(df["hour"].max())
+            hour_range = st.sidebar.slider(
+                "Hour Range",
+                min_hour,
+                max_hour,
+                (min_hour, max_hour),
+                step=1,
+            )
+            df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
+        else:
+            st.sidebar.info(f"All records are hour {unique_hours}. No hour filter applied.")
 
     # Region (city/district/region) filter
-possible_region_cols = [col for col in df.columns if col.lower() in ["region", "city", "district"]]
-if possible_region_cols:
-    region_col = possible_region_cols[0]   # Always get the *column name*, not the list
-    unique_regions = sorted(df[region_col].dropna().unique())
-    selected_regions = st.sidebar.multiselect(
-        "Region", unique_regions, default=unique_regions
-    )
-    df = df[df[region_col].isin(selected_regions)]
-
+    possible_region_cols = [col for col in df.columns if col.lower() in ["region", "city", "district"]]
+    if possible_region_cols:
+        region_col = possible_region_cols   # Always get the column name, not the list
+        unique_regions = sorted(df[region_col].dropna().unique())
+        selected_regions = st.sidebar.multiselect(
+            "Region", unique_regions, default=unique_regions
+        )
+        df = df[df[region_col].isin(selected_regions)]
 
     # Views by role
     if role == "public":
@@ -249,7 +243,6 @@ if possible_region_cols:
         st.success("Analyst View")
         st.subheader("Trend Over Time")
 
-        # Add a selector for the time period
         period = st.radio(
             "Select trend interval", ["Daily", "Weekly", "Monthly"], index=0, horizontal=True
         )
@@ -406,10 +399,8 @@ if possible_region_cols:
     cols[1].metric("Crime Types", unique_types)
     cols[2].metric("Date Range", date_span)
 
-
 # Main flow
 if st.session_state.logged_in:
     show_dashboard()
 else:
     show_login()
-
