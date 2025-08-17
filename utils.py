@@ -7,7 +7,7 @@ USERS_FILE = "users.json"
 def load_users():
     if not os.path.exists(USERS_FILE):
         with open(USERS_FILE, "w") as f:
-            json.dump({"users": []}, f)
+            json.dump({"users": []}, f, indent=4)
     with open(USERS_FILE, "r") as f:
         data = json.load(f)
     return data.get("users", [])
