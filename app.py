@@ -83,8 +83,8 @@ def show_login():
     st.markdown(
         """
         <div style="max-width:420px; margin:auto; padding:2rem; background:#2A2A33; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.05);">
-            <h2 style="text-align:center; color:#1f77b4;">Login</h2>
-            <p style="text-align:center; margin-top: -10px;color:#1f77b4;">Enter credentials to access the dashboard</p>
+            <h2 style="text-align:center; color:FFFFFF;">Login</h2>
+            <p style="text-align:center; margin-top: -10px;color:FFFFFF;">Enter credentials to access the dashboard</p>
         </div>
         """,
         unsafe_allow_html=True,
