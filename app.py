@@ -82,7 +82,7 @@ def generate_pdf_report(df, username, chart_paths):
 def show_login():
     st.markdown(
         """
-        <div style="max-width:420px; margin:auto; padding:2rem; background:#f5f7fa; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.05);">
+        <div style="max-width:420px; margin:auto; padding:2rem; background:#535050; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.05);">
             <h2 style="text-align:center; color:#1f77b4;">Login</h2>
             <p style="text-align:center; margin-top: -10px;color:#1f77b4;">Enter credentials to access the dashboard</p>
         </div>
