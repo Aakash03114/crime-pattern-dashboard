@@ -256,10 +256,13 @@ def show_dashboard():
     if "date" in df.columns:
         df["hour"] = df["date"].dt.hour
         min_hour, max_hour = int(df["hour"].min()), int(df["hour"].max())
-        hour_range = st.sidebar.slider(
-            "Hour Range", min_hour, max_hour, (min_hour, max_hour), step=1
-        )
-        df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
+        if min_hour == max_hour:
+            st.sidebar.info(f"All records are from hour {min_hour}:00")
+        else:
+            hour_range = st.sidebar.slider(
+                "Hour Range", min_hour, max_hour, (min_hour, max_hour), step=1
+            )
+            df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
 
     possible_region_cols = [col for col in df.columns if col.lower() in ["region", "city", "district"]]
     if possible_region_cols:
