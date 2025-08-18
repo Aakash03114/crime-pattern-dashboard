@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import numpy as np
 import json
 import io
 import os
@@ -235,6 +236,7 @@ def show_dashboard():
 """)
 
     # === FILTERS ===
+    # Crime type
     if "crime_type" in df.columns:
         crime_types = st.sidebar.multiselect(
             "Crime Type",
@@ -244,34 +246,52 @@ def show_dashboard():
         if crime_types:
             df = df[df["crime_type"].isin(crime_types)]
 
-    if "date" in df.columns:
+    # Date range
+    if "date" in df.columns and not df.empty:
         date_range = st.sidebar.date_input(
             "Date Range",
             [df["date"].min().date(), df["date"].max().date()]
         )
-        if len(date_range) == 2:
+        if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
             start, end = date_range
             df = df[(df["date"].dt.date >= start) & (df["date"].dt.date <= end)]
 
-    if "date" in df.columns:
+    # Time of day — ALWAYS SHOW 0–23 slider so it never "disappears"
+    if "date" in df.columns and not df.empty:
         df["hour"] = df["date"].dt.hour
-        min_hour, max_hour = int(df["hour"].min()), int(df["hour"].max())
-        if min_hour == max_hour:
-            st.sidebar.info(f"All records are from hour {min_hour}:00")
-        else:
-            hour_range = st.sidebar.slider(
-                "Hour Range", min_hour, max_hour, (min_hour, max_hour), step=1
-            )
-            df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
+        hour_range = st.sidebar.slider("Hour Range (0–23)", 0, 23, (0, 23), step=1)
+        df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
+        # Optional: show available hours for context
+        avail_hours = sorted(df["hour"].dropna().unique().tolist())
+        st.sidebar.caption(f"Available hours after filters: {avail_hours}" if avail_hours else "No records in selected hour range.")
 
+    # Region filter
+    # 1) Use actual region/city/district if present
     possible_region_cols = [col for col in df.columns if col.lower() in ["region", "city", "district"]]
     if possible_region_cols:
         region_col = possible_region_cols[0]
-        unique_regions = sorted(df[region_col].dropna().unique())
-        selected_regions = st.sidebar.multiselect(
-            "Region", unique_regions, default=unique_regions
-        )
-        df = df[df[region_col].isin(selected_regions)]
+        unique_regions = sorted(df[region_col].dropna().unique().tolist())
+        selected_regions = st.sidebar.multiselect("Region", unique_regions, default=unique_regions)
+        if selected_regions:
+            df = df[df[region_col].isin(selected_regions)]
+    else:
+        # 2) Fallback to a grid-based region derived from lat/lon (works with your dataset)
+        st.sidebar.markdown("**Region (derived from Lat/Lon grid)**")
+        grid_size = st.sidebar.slider("Grid size (°)", 0.01, 0.5, 0.05, 0.01)
+        # Round lat/lon to nearest grid center
+        lat_bin = np.round(df["latitude"] / grid_size) * grid_size
+        lon_bin = np.round(df["longitude"] / grid_size) * grid_size
+        df["region_grid"] = lat_bin.round(4).astype(str) + "," + lon_bin.round(4).astype(str)
+
+        grid_regions = sorted(df["region_grid"].dropna().unique().tolist())
+        selected_grids = st.sidebar.multiselect("Region (grid)", grid_regions, default=grid_regions)
+        if selected_grids:
+            df = df[df["region_grid"].isin(selected_grids)]
+
+    # Stop if filters remove everything
+    if df.empty:
+        st.warning("No data matches the current filters. Try widening your selections.")
+        return
 
     # === VIEWS BASED ON ROLE ===
     if role == "public":
