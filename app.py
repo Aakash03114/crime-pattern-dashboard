@@ -282,7 +282,7 @@ def show_dashboard():
         else:
             st.info("No location data to display.")
 
-        # Forecasting with confidence interval
+        # Forecasting with confidence interval + actual vs predicted
         st.subheader("📈 Crime Forecast (Next 30 Days)")
         try:
             from prophet import Prophet
@@ -298,9 +298,14 @@ def show_dashboard():
                 future = model.make_future_dataframe(periods=30)
                 forecast = model.predict(future)
 
+                # Merge actual and predicted for comparison
+                compare_df = forecast.merge(ts, on="ds", how="left")
+
                 fig_forecast = px.line(forecast, x="ds", y="yhat",
                                        labels={"ds": "Date", "yhat": "Predicted Crime Count"},
-                                       title="Forecast with Confidence Interval")
+                                       title="Forecast with Actual vs Predicted")
+
+                # Add confidence interval
                 fig_forecast.add_traces([
                     dict(
                         x=list(forecast["ds"]) + list(forecast["ds"][::-1]),
@@ -312,8 +317,13 @@ def show_dashboard():
                         name="Confidence Interval"
                     )
                 ])
-                fig_forecast.add_scatter(x=ts["ds"], y=ts["y"], mode="markers+lines",
-                                         name="Historical", marker=dict(size=6))
+
+                # Actual vs Predicted
+                fig_forecast.add_scatter(x=compare_df["ds"], y=compare_df["y"],
+                                         mode="markers+lines", name="Actual")
+                fig_forecast.add_scatter(x=forecast["ds"], y=forecast["yhat"],
+                                         mode="lines", name="Predicted")
+
                 st.plotly_chart(fig_forecast, use_container_width=True)
         except Exception as e:
             st.error(f"Forecasting failed: {e}")
