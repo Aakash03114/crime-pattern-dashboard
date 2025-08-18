@@ -152,12 +152,13 @@ def show_dashboard():
         st.info("Please upload a CSV, Excel, or PDF file with columns: date, crime_type, latitude, longitude.")
         return
 
+    # --- RAW DATA LOAD ---
     try:
         fname = uploaded_file.name.lower()
         if fname.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
+            raw_df = pd.read_csv(uploaded_file)
         elif fname.endswith((".xls", ".xlsx")):
-            df = pd.read_excel(uploaded_file)
+            raw_df = pd.read_excel(uploaded_file)
         else:
             st.error("Unsupported file type.")
             return
@@ -165,21 +166,75 @@ def show_dashboard():
         st.error(f"Failed to read file: {e}")
         return
 
-    df.columns = df.columns.str.lower()
+    raw_df.columns = raw_df.columns.str.lower()
     required = {"date", "crime_type", "latitude", "longitude"}
-    if not required.issubset(df.columns):
+    if not required.issubset(raw_df.columns):
         st.error("File must contain: date, crime_type, latitude, longitude")
         return
 
-    # Preprocessing
-    df = df.drop_duplicates()
+    # Show raw data
+    st.markdown("### Raw Data Preview")
+    st.dataframe(raw_df.head(20))
+
+    raw_stats = {
+        "Rows": len(raw_df),
+        "Columns": list(raw_df.columns),
+        "Duplicate Rows": raw_df.duplicated().sum(),
+        "Missing Dates": raw_df["date"].isnull().sum() if "date" in raw_df else "-",
+        "Missing Latitudes": raw_df["latitude"].isnull().sum() if "latitude" in raw_df else "-",
+        "Missing Longitudes": raw_df["longitude"].isnull().sum() if "longitude" in raw_df else "-"
+    }
+    st.markdown(f"""**Raw Data Stats**  
+- Rows: {raw_stats['Rows']}  
+- Columns: {raw_stats['Columns']}  
+- Duplicates: {raw_stats['Duplicate Rows']}  
+- Missing Dates: {raw_stats['Missing Dates']}  
+- Missing Latitudes: {raw_stats['Missing Latitudes']}  
+- Missing Longitudes: {raw_stats['Missing Longitudes']}  
+""")
+
+    # --- CLEANING ---
+    df = raw_df.drop_duplicates()
     try:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
     except Exception:
         pass
     df = df.dropna(subset=["date", "latitude", "longitude", "crime_type"])
 
-    # Filters
+    # Cleaned data preview
+    st.markdown("### Cleaned Data Preview")
+    st.dataframe(df.head(20))
+
+    clean_stats = {
+        "Rows": len(df),
+        "Columns": list(df.columns),
+        "Duplicate Rows": df.duplicated().sum(),
+        "Missing Dates": df["date"].isnull().sum() if "date" in df else "-",
+        "Missing Latitudes": df["latitude"].isnull().sum() if "latitude" in df else "-",
+        "Missing Longitudes": df["longitude"].isnull().sum() if "longitude" in df else "-"
+    }
+    st.markdown(f"""**Cleaned Data Stats**  
+- Rows: {clean_stats['Rows']}  
+- Columns: {clean_stats['Columns']}  
+- Duplicates: {clean_stats['Duplicate Rows']}  
+- Missing Dates: {clean_stats['Missing Dates']}  
+- Missing Latitudes: {clean_stats['Missing Latitudes']}  
+- Missing Longitudes: {clean_stats['Missing Longitudes']}  
+""")
+
+    # --- SUMMARY OF CHANGES ---
+    diff_stats = {
+        "Rows Removed": raw_stats['Rows'] - clean_stats['Rows'],
+        "Duplicates Removed": raw_stats['Duplicate Rows'],
+        "Rows with Missing Key Columns Removed": raw_stats['Rows'] - (df.shape[0] + raw_stats['Duplicate Rows'])
+    }
+    st.markdown(f"""**Data Cleaning Summary**  
+- Total Rows Removed: {diff_stats['Rows Removed']}  
+- Duplicates Removed: {diff_stats['Duplicates Removed']}  
+- Rows with Missing Date/Lat/Lon/Crime Type Removed: {diff_stats['Rows with Missing Key Columns Removed']}  
+""")
+
+    # === FILTERS ===
     if "crime_type" in df.columns:
         crime_types = st.sidebar.multiselect(
             "Crime Type",
@@ -189,7 +244,6 @@ def show_dashboard():
         if crime_types:
             df = df[df["crime_type"].isin(crime_types)]
 
-    # Date Range filter
     if "date" in df.columns:
         date_range = st.sidebar.date_input(
             "Date Range",
@@ -199,7 +253,6 @@ def show_dashboard():
             start, end = date_range
             df = df[(df["date"].dt.date >= start) & (df["date"].dt.date <= end)]
 
-    # Time filter (Hour of Day)
     if "date" in df.columns:
         df["hour"] = df["date"].dt.hour
         min_hour, max_hour = int(df["hour"].min()), int(df["hour"].max())
@@ -208,7 +261,6 @@ def show_dashboard():
         )
         df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
 
-    # Region filter (city/district/region, update column name as needed)
     possible_region_cols = [col for col in df.columns if col.lower() in ["region", "city", "district"]]
     if possible_region_cols:
         region_col = possible_region_cols[0]
@@ -218,7 +270,7 @@ def show_dashboard():
         )
         df = df[df[region_col].isin(selected_regions)]
 
-    # Views by role
+    # === VIEWS BASED ON ROLE ===
     if role == "public":
         st.info("Public View: aggregated summary")
         st.subheader("Crime by Type")
@@ -232,14 +284,7 @@ def show_dashboard():
     elif role == "analyst":
         st.success("Analyst View")
         st.subheader("Trend Over Time")
-
-        # Add a selector for the time period
-        period = st.radio(
-            "Select trend interval",
-            ["Daily", "Weekly", "Monthly"],
-            index=0,
-            horizontal=True
-        )
+        period = st.radio("Select trend interval", ["Daily", "Weekly", "Monthly"], index=0, horizontal=True)
 
         if period == "Daily":
             trend_df = df.groupby(df["date"].dt.date).size().reset_index(name="count")
@@ -253,12 +298,10 @@ def show_dashboard():
             trend_df["date"] = trend_df["date"].astype(str)
             x_label = "Month"
 
-        fig_trend = px.line(
-            trend_df, x="date", y="count",
-            title=f"Crime Trend ({period})",
-            labels={"date": x_label, "count": "Crime Count"},
-            markers=True
-        )
+        fig_trend = px.line(trend_df, x="date", y="count",
+                            title=f"Crime Trend ({period})",
+                            labels={"date": x_label, "count": "Crime Count"},
+                            markers=True)
         st.plotly_chart(fig_trend, use_container_width=True)
 
     elif role == "law_enforcement":
@@ -266,23 +309,17 @@ def show_dashboard():
         st.subheader("Raw Data")
         st.dataframe(df)
 
-        # Crime Map differentiated by crime type
         st.subheader("Crime Map (Differentiated by Crime Type)")
         map_df = df.dropna(subset=["latitude", "longitude", "crime_type"])
         if not map_df.empty:
-            fig_map = px.scatter_mapbox(map_df,
-                                        lat="latitude",
-                                        lon="longitude",
-                                        color="crime_type",
-                                        hover_name="crime_type",
-                                        zoom=10,
-                                        mapbox_style="carto-positron",
+            fig_map = px.scatter_mapbox(map_df, lat="latitude", lon="longitude",
+                                        color="crime_type", hover_name="crime_type",
+                                        zoom=10, mapbox_style="carto-positron",
                                         title="Crime Incidents by Type")
             st.plotly_chart(fig_map, use_container_width=True)
         else:
             st.info("No location data to display.")
 
-        # Forecasting with confidence interval + actual vs predicted
         st.subheader("📈 Crime Forecast (Next 30 Days)")
         try:
             from prophet import Prophet
@@ -298,14 +335,12 @@ def show_dashboard():
                 future = model.make_future_dataframe(periods=30)
                 forecast = model.predict(future)
 
-                # Merge actual and predicted for comparison
                 compare_df = forecast.merge(ts, on="ds", how="left")
 
                 fig_forecast = px.line(forecast, x="ds", y="yhat",
                                        labels={"ds": "Date", "yhat": "Predicted Crime Count"},
                                        title="Forecast with Actual vs Predicted")
 
-                # Add confidence interval
                 fig_forecast.add_traces([
                     dict(
                         x=list(forecast["ds"]) + list(forecast["ds"][::-1]),
@@ -318,7 +353,6 @@ def show_dashboard():
                     )
                 ])
 
-                # Actual vs Predicted
                 fig_forecast.add_scatter(x=compare_df["ds"], y=compare_df["y"],
                                          mode="markers+lines", name="Actual")
                 fig_forecast.add_scatter(x=forecast["ds"], y=forecast["yhat"],
@@ -328,7 +362,6 @@ def show_dashboard():
         except Exception as e:
             st.error(f"Forecasting failed: {e}")
 
-        # Hotspot detection
         st.subheader("🔥 Crime Hotspot Detection")
         try:
             from sklearn.cluster import KMeans
@@ -348,7 +381,6 @@ def show_dashboard():
         except Exception as e:
             st.error(f"Hotspot detection error: {e}")
 
-        # Report generation
         st.subheader("📄 Export Report")
         chart_paths = []
         vc = df["crime_type"].value_counts().reset_index()
