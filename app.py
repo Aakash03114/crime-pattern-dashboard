@@ -1,6 +1,3 @@
-# ==============================
-# app.py — Crime Pattern Dashboard (FULLY UPDATED with Alerts & Notifications)
-# ==============================
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -15,21 +12,15 @@ from utils import authenticate_user, create_user
 
 st.set_page_config(page_title="Crime Pattern Dashboard", layout="wide")
 
-# -------------------------------------------------------------------
-# Session State
-# -------------------------------------------------------------------
+# Initialize session state
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "username" not in st.session_state:
     st.session_state.username = ""
 if "role" not in st.session_state:
     st.session_state.role = ""
-if "alerts_dismissed" not in st.session_state:
-    st.session_state.alerts_dismissed = False
 
-# -------------------------------------------------------------------
-# Ensure users.json exists (seed default users)
-# -------------------------------------------------------------------
+# Ensure users.json exists
 if not os.path.exists("users.json"):
     with open("users.json", "w") as f:
         json.dump({
@@ -40,11 +31,8 @@ if not os.path.exists("users.json"):
             ]
         }, f, indent=2)
 
-# -------------------------------------------------------------------
-# Helpers
-# -------------------------------------------------------------------
+
 def save_plotly_as_image(fig):
-    """Save plotly chart as PNG using kaleido for PDF embedding."""
     try:
         tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         fig.write_image(tmpfile.name, format="png", engine="kaleido")
@@ -54,7 +42,7 @@ def save_plotly_as_image(fig):
         return None
 
 
-def generate_pdf_report(df: pd.DataFrame, username: str, chart_paths: list[str]) -> io.BytesIO:
+def generate_pdf_report(df, username, chart_paths):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
@@ -66,15 +54,14 @@ def generate_pdf_report(df: pd.DataFrame, username: str, chart_paths: list[str])
     pdf.ln(5)
 
     # Summary stats
-    if "crime_type" in df.columns:
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 8, "Crime Type Counts:", ln=1)
-        pdf.set_font("Arial", size=12)
-        summary = df["crime_type"].value_counts().reset_index()
-        summary.columns = ["crime_type", "count"]
-        for _, row in summary.iterrows():
-            pdf.cell(0, 6, f"{row['crime_type']}: {row['count']}", ln=1)
-        pdf.ln(5)
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 8, "Crime Type Counts:", ln=1)
+    pdf.set_font("Arial", size=12)
+    summary = df["crime_type"].value_counts().reset_index()
+    summary.columns = ["crime_type", "count"]
+    for _, row in summary.iterrows():
+        pdf.cell(0, 6, f"{row['crime_type']}: {row['count']}", ln=1)
+    pdf.ln(5)
 
     # Add charts if available
     for path in chart_paths:
@@ -93,98 +80,12 @@ def generate_pdf_report(df: pd.DataFrame, username: str, chart_paths: list[str])
     return pdf_bytes
 
 
-def load_uploaded_file(uploaded_file) -> pd.DataFrame | None:
-    try:
-        fname = uploaded_file.name.lower()
-        if fname.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-        elif fname.endswith((".xls", ".xlsx")):
-            df = pd.read_excel(uploaded_file)
-        else:
-            st.error("Unsupported file type. Please upload CSV or Excel.")
-            return None
-        return df
-    except Exception as e:
-        st.error(f"Failed to read file: {e}")
-        return None
-
-
-def get_alerts(df: pd.DataFrame, role: str) -> list[tuple[str, str]]:
-    """Return list of (level, message) alerts based on data & role."""
-    alerts: list[tuple[str, str]] = []
-    if df is None or df.empty:
-        return [("warning", "Uploaded dataset has no rows after cleaning/filters.")]
-
-    # Data quality
-    miss_cols = []
-    for col in ["date", "latitude", "longitude", "crime_type"]:
-        if col not in df.columns:
-            miss_cols.append(col)
-    if miss_cols:
-        alerts.append(("error", f"Missing required columns: {', '.join(miss_cols)}"))
-        return alerts
-
-    # Type conversions
-    # Coerce to datetime for checks that follow (do not mutate original here)
-    _tmp = df.copy()
-    _tmp["date"] = pd.to_datetime(_tmp["date"], errors="coerce")
-
-    # General signals (all roles)
-    if df["crime_type"].nunique() == 1:
-        alerts.append(("info", "All incidents belong to the same crime type."))
-
-    if _tmp["date"].isna().sum() > 0:
-        alerts.append(("warning", f"{_tmp['date'].isna().sum()} records have invalid dates and may be dropped in filters."))
-
-    if df["latitude"].isna().sum() > 0 or df["longitude"].isna().sum() > 0:
-        alerts.append(("warning", "Some records are missing location data (latitude/longitude)."))
-
-    # Recent spike (last 7 days vs. prior 7 days)
-    if _tmp["date"].notna().any():
-        cutoff = _tmp["date"].max()
-        last7 = _tmp[_tmp["date"] >= (cutoff - pd.Timedelta(days=7))]
-        prev7 = _tmp[(_tmp["date"] < (cutoff - pd.Timedelta(days=0))) & (_tmp["date"] >= (cutoff - pd.Timedelta(days=14)))]
-        if len(prev7) > 0 and len(last7) >= 5:
-            change = (len(last7) - len(prev7)) / max(len(prev7), 1)
-            if change >= 0.5:
-                alerts.append(("error", f"Incident volume up {int(change*100)}% in last 7 days vs prior week."))
-            elif change <= -0.5:
-                alerts.append(("info", f"Incident volume down {abs(int(change*100))}% in last 7 days vs prior week."))
-
-    # Role-specific
-    if role == "public":
-        try:
-            top_crime = df["crime_type"].value_counts().idxmax()
-            alerts.append(("info", f"Most reported crime: **{top_crime}**"))
-        except Exception:
-            pass
-
-    elif role == "analyst":
-        # Spike by type in the last 7 days
-        if _tmp["date"].notna().any():
-            recent = _tmp[_tmp["date"] >= (_tmp["date"].max() - pd.Timedelta(days=7))]
-            if not recent.empty:
-                vc = recent["crime_type"].value_counts()
-                if not vc.empty and vc.max() >= 10:
-                    spike_type = vc.idxmax()
-                    alerts.append(("warning", f"Spike detected: ≥10 incidents of {spike_type} in the last 7 days."))
-
-    elif role == "law_enforcement":
-        if len(df) >= 100:
-            alerts.append(("error", "High dataset volume loaded (≥100 rows). Prioritize hotspot analysis."))
-        alerts.append(("info", "System maintenance window: Sunday 01:00–03:00."))
-
-    return alerts
-
-# -------------------------------------------------------------------
-# UI: Login
-# -------------------------------------------------------------------
 def show_login():
     st.markdown(
         """
-        <div style="max-width:460px; margin:auto; padding:1.5rem; background:#1f2937; border-radius:14px;">
-            <h2 style="text-align:center; color:#fff; margin:0 0 8px;">Login</h2>
-            <p style="text-align:center; color:#cbd5e1; margin:0;">Enter credentials to access the dashboard</p>
+        <div style="max-width:420px; margin:auto; padding:2rem; background:#2A2A33; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.05);">
+            <h2 style="text-align:center; color:FFFFFF;">Login</h2>
+            <p style="text-align:center; margin-top: -10px;color:FFFFFF;">Enter credentials to access the dashboard</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -194,16 +95,19 @@ def show_login():
     with col2:
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
-        role_select = st.selectbox("Role", ["public", "analyst", "law_enforcement"]) 
+        role_select = st.selectbox("Role", ["public", "analyst", "law_enforcement"])
 
-        if st.button("Login", use_container_width=True):
+        if st.button("Login"):
             role = authenticate_user(username, password)
             if role and role == role_select:
                 st.session_state.logged_in = True
                 st.session_state.username = username
                 st.session_state.role = role
                 st.success(f"Logged in as {username} ({role})")
-                st.rerun()
+                try:
+                    st.experimental_rerun()
+                except AttributeError:
+                    pass
             else:
                 st.error("Invalid credentials or role mismatch.")
 
@@ -213,7 +117,7 @@ def show_login():
     new_password = st.text_input("New Password", type="password", key="signup_pass")
     new_role = st.selectbox("Select Role", ["public", "analyst", "law_enforcement"], key="signup_role")
 
-    if st.button("Sign Up", type="secondary"):
+    if st.button("Sign Up"):
         if not new_username or not new_password:
             st.warning("Provide both username and password.")
         else:
@@ -223,149 +127,147 @@ def show_login():
             else:
                 st.error("Username already exists.")
 
-# -------------------------------------------------------------------
-# Core Dashboard
-# -------------------------------------------------------------------
+
 def show_dashboard():
     role = st.session_state.role
-    st.sidebar.markdown(f"*Logged in as:* **{st.session_state.username}** ({role})")
-    if st.sidebar.button("Logout", use_container_width=True):
+    st.sidebar.markdown(f"*Logged in as:* {st.session_state.username} ({role})")
+
+    if st.sidebar.button("Logout"):
         st.session_state.logged_in = False
         st.session_state.username = ""
         st.session_state.role = ""
-        st.rerun()
+        try:
+            st.experimental_rerun()
+        except AttributeError:
+            pass
         return
 
     st.title("🚔 Crime Pattern Analysis Dashboard")
 
     uploaded_file = st.file_uploader(
-        "Upload Crime Data File (CSV or Excel)",
+        "Upload Crime Data File (CSV, Excel, or PDF)",
         type=["csv", "xlsx", "xls"],
     )
 
     if uploaded_file is None:
-        st.info("Please upload a CSV or Excel file with columns: date, crime_type, latitude, longitude (and optionally region/city/district).")
+        st.info("Please upload a CSV, Excel, or PDF file with columns: date, crime_type, latitude, longitude.")
         return
 
     # --- RAW DATA LOAD ---
-    raw_df = load_uploaded_file(uploaded_file)
-    if raw_df is None:
+    try:
+        fname = uploaded_file.name.lower()
+        if fname.endswith(".csv"):
+            raw_df = pd.read_csv(uploaded_file)
+        elif fname.endswith((".xls", ".xlsx")):
+            raw_df = pd.read_excel(uploaded_file)
+        else:
+            st.error("Unsupported file type.")
+            return
+    except Exception as e:
+        st.error(f"Failed to read file: {e}")
         return
 
-    # Normalize columns
-    raw_df.columns = raw_df.columns.str.lower().str.strip()
+    raw_df.columns = raw_df.columns.str.lower()
     required = {"date", "crime_type", "latitude", "longitude"}
     if not required.issubset(raw_df.columns):
-        st.error(f"File must contain columns: {sorted(list(required))}")
-        st.stop()
+        st.error("File must contain: date, crime_type, latitude, longitude")
+        return
 
     # Show raw data
     st.markdown("### Raw Data Preview")
-    st.dataframe(raw_df.head(20), use_container_width=True)
+    st.dataframe(raw_df.head(20))
 
     raw_stats = {
         "Rows": len(raw_df),
         "Columns": list(raw_df.columns),
         "Duplicate Rows": raw_df.duplicated().sum(),
-        "Missing Dates": raw_df["date"].isnull().sum(),
-        "Missing Latitudes": raw_df["latitude"].isnull().sum(),
-        "Missing Longitudes": raw_df["longitude"].isnull().sum(),
+        "Missing Dates": raw_df["date"].isnull().sum() if "date" in raw_df else "-",
+        "Missing Latitudes": raw_df["latitude"].isnull().sum() if "latitude" in raw_df else "-",
+        "Missing Longitudes": raw_df["longitude"].isnull().sum() if "longitude" in raw_df else "-"
     }
-    with st.expander("Raw Data Stats", expanded=False):
-        st.json(raw_stats)
+    st.markdown(f"""**Raw Data Stats**  
+- Rows: {raw_stats['Rows']}  
+- Columns: {raw_stats['Columns']}  
+- Duplicates: {raw_stats['Duplicate Rows']}  
+- Missing Dates: {raw_stats['Missing Dates']}  
+- Missing Latitudes: {raw_stats['Missing Latitudes']}  
+- Missing Longitudes: {raw_stats['Missing Longitudes']}  
+""")
 
     # --- CLEANING ---
-    df = raw_df.drop_duplicates().copy()
-    # Coerce date
+    df = raw_df.drop_duplicates()
     try:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
     except Exception:
         pass
-    # Drop rows missing key fields
     df = df.dropna(subset=["date", "latitude", "longitude", "crime_type"])
 
     # Cleaned data preview
     st.markdown("### Cleaned Data Preview")
-    st.dataframe(df.head(20), use_container_width=True)
+    st.dataframe(df.head(20))
 
     clean_stats = {
         "Rows": len(df),
         "Columns": list(df.columns),
         "Duplicate Rows": df.duplicated().sum(),
-        "Missing Dates": df["date"].isnull().sum(),
-        "Missing Latitudes": df["latitude"].isnull().sum(),
-        "Missing Longitudes": df["longitude"].isnull().sum(),
+        "Missing Dates": df["date"].isnull().sum() if "date" in df else "-",
+        "Missing Latitudes": df["latitude"].isnull().sum() if "latitude" in df else "-",
+        "Missing Longitudes": df["longitude"].isnull().sum() if "longitude" in df else "-"
     }
-    with st.expander("Cleaned Data Stats", expanded=False):
-        st.json(clean_stats)
+    st.markdown(f"""**Cleaned Data Stats**  
+- Rows: {clean_stats['Rows']}  
+- Columns: {clean_stats['Columns']}  
+- Duplicates: {clean_stats['Duplicate Rows']}  
+- Missing Dates: {clean_stats['Missing Dates']}  
+- Missing Latitudes: {clean_stats['Missing Latitudes']}  
+- Missing Longitudes: {clean_stats['Missing Longitudes']}  
+""")
 
     # --- SUMMARY OF CHANGES ---
-    # Identify removed rows (anti-join by all columns)
-    removed_rows = raw_df.merge(df.drop_duplicates(), how="outer", indicator=True)
-    removed_rows = removed_rows[removed_rows["_merge"] == "left_only"].drop(columns=["_merge"])
-
     diff_stats = {
         "Rows Removed": raw_stats['Rows'] - clean_stats['Rows'],
         "Duplicates Removed": raw_stats['Duplicate Rows'],
         "Rows with Missing Key Columns Removed": raw_stats['Rows'] - (df.shape[0] + raw_stats['Duplicate Rows'])
     }
-
-    st.markdown("### Data Cleaning Summary")
-    st.write(diff_stats)
-    if not removed_rows.empty:
-        with st.expander("Show rows removed during cleaning"):
-            st.dataframe(removed_rows, use_container_width=True)
-
-    # === ALERTS & NOTIFICATIONS ===
-    st.markdown("## 🔔 Alerts & Notifications")
-    alerts = get_alerts(df, role)
-    if alerts and not st.session_state.alerts_dismissed:
-        for level, msg in alerts:
-            if level == "info":
-                st.info(msg)
-            elif level == "warning":
-                st.warning(msg)
-            elif level == "error":
-                st.error(msg)
-        st.button("Dismiss alerts for this session", on_click=lambda: st.session_state.update({"alerts_dismissed": True}))
-    elif not alerts:
-        st.success("No major alerts. Dataset looks normal ✅")
+    st.markdown(f"""**Data Cleaning Summary**  
+- Total Rows Removed: {diff_stats['Rows Removed']}  
+- Duplicates Removed: {diff_stats['Duplicates Removed']}  
+- Rows with Missing Date/Lat/Lon/Crime Type Removed: {diff_stats['Rows with Missing Key Columns Removed']}  
+""")
 
     # === FILTERS ===
-    st.sidebar.markdown("## Filters")
-
-    # Crime type filter
+    # Crime type
     if "crime_type" in df.columns:
         crime_types = st.sidebar.multiselect(
             "Crime Type",
             sorted(df["crime_type"].dropna().unique()),
-            default=sorted(df["crime_type"].dropna().unique()),
+            default=sorted(df["crime_type"].dropna().unique())
         )
         if crime_types:
             df = df[df["crime_type"].isin(crime_types)]
 
-    # Date range filter
+    # Date range
     if "date" in df.columns and not df.empty:
         date_range = st.sidebar.date_input(
             "Date Range",
-            [df["date"].min().date(), df["date"].max().date()],
+            [df["date"].min().date(), df["date"].max().date()]
         )
         if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
             start, end = date_range
             df = df[(df["date"].dt.date >= start) & (df["date"].dt.date <= end)]
 
-    # Hour filter (always visible)
+    # Time of day — ALWAYS SHOW 0–23 slider so it never "disappears"
     if "date" in df.columns and not df.empty:
         df["hour"] = df["date"].dt.hour
         hour_range = st.sidebar.slider("Hour Range (0–23)", 0, 23, (0, 23), step=1)
         df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
+        # Optional: show available hours for context
         avail_hours = sorted(df["hour"].dropna().unique().tolist())
-        st.sidebar.caption(
-            f"Available hours after filters: {avail_hours}" if avail_hours else "No records in selected hour range."
-        )
+        st.sidebar.caption(f"Available hours after filters: {avail_hours}" if avail_hours else "No records in selected hour range.")
 
-    # Region/City/District or derived grid filter
-    possible_region_cols = [c for c in df.columns if c in ["region", "city", "district"]]
+    # Region filter
+    # 1) Use actual region/city/district if present
+    possible_region_cols = [col for col in df.columns if col.lower() in ["region", "city", "district"]]
     if possible_region_cols:
         region_col = possible_region_cols[0]
         unique_regions = sorted(df[region_col].dropna().unique().tolist())
@@ -373,11 +275,14 @@ def show_dashboard():
         if selected_regions:
             df = df[df[region_col].isin(selected_regions)]
     else:
+        # 2) Fallback to a grid-based region derived from lat/lon (works with your dataset)
         st.sidebar.markdown("**Region (derived from Lat/Lon grid)**")
         grid_size = st.sidebar.slider("Grid size (°)", 0.01, 0.5, 0.05, 0.01)
+        # Round lat/lon to nearest grid center
         lat_bin = np.round(df["latitude"] / grid_size) * grid_size
         lon_bin = np.round(df["longitude"] / grid_size) * grid_size
         df["region_grid"] = lat_bin.round(4).astype(str) + "," + lon_bin.round(4).astype(str)
+
         grid_regions = sorted(df["region_grid"].dropna().unique().tolist())
         selected_grids = st.sidebar.multiselect("Region (grid)", grid_regions, default=grid_regions)
         if selected_grids:
@@ -388,19 +293,22 @@ def show_dashboard():
         st.warning("No data matches the current filters. Try widening your selections.")
         return
 
-    # === VIEWS BY ROLE ===
+    # === VIEWS BASED ON ROLE ===
     if role == "public":
         st.info("Public View: aggregated summary")
         st.subheader("Crime by Type")
         vc = df["crime_type"].value_counts().reset_index()
         vc.columns = ["crime_type", "count"]
-        fig = px.bar(vc, x="crime_type", y="count", labels={"crime_type": "Crime Type", "count": "Count"}, title="Crime Frequency by Type")
+        fig = px.bar(vc, x="crime_type", y="count",
+                     labels={"crime_type": "Crime Type", "count": "Count"},
+                     title="Crime Frequency by Type")
         st.plotly_chart(fig, use_container_width=True)
 
     elif role == "analyst":
         st.success("Analyst View")
         st.subheader("Trend Over Time")
         period = st.radio("Select trend interval", ["Daily", "Weekly", "Monthly"], index=0, horizontal=True)
+
         if period == "Daily":
             trend_df = df.groupby(df["date"].dt.date).size().reset_index(name="count")
             x_label = "Day"
@@ -408,23 +316,29 @@ def show_dashboard():
             trend_df = df.groupby(df["date"].dt.to_period("W")).size().reset_index(name="count")
             trend_df["date"] = trend_df["date"].astype(str)
             x_label = "Week"
-        else:
+        elif period == "Monthly":
             trend_df = df.groupby(df["date"].dt.to_period("M")).size().reset_index(name="count")
             trend_df["date"] = trend_df["date"].astype(str)
             x_label = "Month"
 
-        fig_trend = px.line(trend_df, x="date", y="count", title=f"Crime Trend ({period})", labels={"date": x_label, "count": "Crime Count"}, markers=True)
+        fig_trend = px.line(trend_df, x="date", y="count",
+                            title=f"Crime Trend ({period})",
+                            labels={"date": x_label, "count": "Crime Count"},
+                            markers=True)
         st.plotly_chart(fig_trend, use_container_width=True)
 
     elif role == "law_enforcement":
         st.success("Law Enforcement View: Full Access")
         st.subheader("Raw Data")
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df)
 
         st.subheader("Crime Map (Differentiated by Crime Type)")
-        map_df = df.dropna(subset=["latitude", "longitude", "crime_type"]) 
+        map_df = df.dropna(subset=["latitude", "longitude", "crime_type"])
         if not map_df.empty:
-            fig_map = px.scatter_mapbox(map_df, lat="latitude", lon="longitude", color="crime_type", hover_name="crime_type", zoom=10, mapbox_style="carto-positron", title="Crime Incidents by Type")
+            fig_map = px.scatter_mapbox(map_df, lat="latitude", lon="longitude",
+                                        color="crime_type", hover_name="crime_type",
+                                        zoom=10, mapbox_style="carto-positron",
+                                        title="Crime Incidents by Type")
             st.plotly_chart(fig_map, use_container_width=True)
         else:
             st.info("No location data to display.")
@@ -435,6 +349,7 @@ def show_dashboard():
             ts = df.groupby(df["date"].dt.floor("d")).size().reset_index(name="y")
             ts.rename(columns={"date": "ds"}, inplace=True)
             ts = ts.sort_values("ds")
+
             if len(ts) < 2:
                 st.warning("Not enough historical data to forecast.")
             else:
@@ -442,8 +357,13 @@ def show_dashboard():
                 model.fit(ts)
                 future = model.make_future_dataframe(periods=30)
                 forecast = model.predict(future)
+
                 compare_df = forecast.merge(ts, on="ds", how="left")
-                fig_forecast = px.line(forecast, x="ds", y="yhat", labels={"ds": "Date", "yhat": "Predicted Crime Count"}, title="Forecast with Actual vs Predicted")
+
+                fig_forecast = px.line(forecast, x="ds", y="yhat",
+                                       labels={"ds": "Date", "yhat": "Predicted Crime Count"},
+                                       title="Forecast with Actual vs Predicted")
+
                 fig_forecast.add_traces([
                     dict(
                         x=list(forecast["ds"]) + list(forecast["ds"][::-1]),
@@ -452,11 +372,15 @@ def show_dashboard():
                         fillcolor="rgba(0,123,255,0.2)",
                         line=dict(color="rgba(255,255,255,0)"),
                         hoverinfo="skip",
-                        name="Confidence Interval",
+                        name="Confidence Interval"
                     )
                 ])
-                fig_forecast.add_scatter(x=compare_df["ds"], y=compare_df["y"], mode="markers+lines", name="Actual")
-                fig_forecast.add_scatter(x=forecast["ds"], y=forecast["yhat"], mode="lines", name="Predicted")
+
+                fig_forecast.add_scatter(x=compare_df["ds"], y=compare_df["y"],
+                                         mode="markers+lines", name="Actual")
+                fig_forecast.add_scatter(x=forecast["ds"], y=forecast["yhat"],
+                                         mode="lines", name="Predicted")
+
                 st.plotly_chart(fig_forecast, use_container_width=True)
         except Exception as e:
             st.error(f"Forecasting failed: {e}")
@@ -470,14 +394,36 @@ def show_dashboard():
                 kmeans = KMeans(n_clusters=k, random_state=0)
                 loc_df = loc_df.copy()
                 loc_df["cluster"] = kmeans.fit_predict(loc_df)
-                fig_hot = px.scatter_mapbox(loc_df, lat="latitude", lon="longitude", color="cluster", zoom=10, mapbox_style="carto-positron", title="Crime Hotspots")
+                fig_hot = px.scatter_mapbox(loc_df, lat="latitude", lon="longitude",
+                                            color="cluster", zoom=10,
+                                            mapbox_style="carto-positron",
+                                            title="Crime Hotspots")
                 st.plotly_chart(fig_hot, use_container_width=True)
             else:
                 st.warning("Need at least 3 points for hotspot detection.")
         except Exception as e:
             st.error(f"Hotspot detection error: {e}")
 
-    # === SUMMARY METRICS ===
+        st.subheader("📄 Export Report")
+        chart_paths = []
+        vc = df["crime_type"].value_counts().reset_index()
+        vc.columns = ["crime_type", "count"]
+        bar_chart = px.bar(vc, x="crime_type", y="count",
+                           labels={"crime_type": "Crime Type", "count": "Count"},
+                           title="Crime Frequency by Type")
+        chart_paths.append(save_plotly_as_image(bar_chart))
+
+        try:
+            if "fig_forecast" in locals():
+                chart_paths.append(save_plotly_as_image(fig_forecast))
+        except:
+            pass
+
+        if st.button("Download PDF Report"):
+            pdf_bytes = generate_pdf_report(df, st.session_state.username, chart_paths)
+            st.download_button("Download PDF", pdf_bytes, file_name="crime_report.pdf")
+
+    # Summary metrics
     st.markdown("## Summary Metrics")
     cols = st.columns(3)
     total_crimes = len(df)
@@ -487,230 +433,8 @@ def show_dashboard():
     cols[1].metric("Crime Types", unique_types)
     cols[2].metric("Date Range", date_span)
 
-    # === EXPORT REPORT ===
-    st.subheader("📄 Export Report")
-    chart_paths = []
-    try:
-        vc = df["crime_type"].value_counts().reset_index()
-        vc.columns = ["crime_type", "count"]
-        bar_chart = px.bar(vc, x="crime_type", y="count", labels={"crime_type": "Crime Type", "count": "Count"}, title="Crime Frequency by Type")
-        chart_paths.append(save_plotly_as_image(bar_chart))
-    except Exception:
-        pass
 
-    if st.button("Generate PDF Report"):
-        pdf_bytes = generate_pdf_report(df, st.session_state.username or "user", chart_paths)
-        st.download_button("Download PDF", pdf_bytes, file_name="crime_report.pdf")
-
-# -------------------------------------------------------------------
-# Main
-# -------------------------------------------------------------------
-if st.session_state.logged_in:
-    show_dashboard()
-else:
-    show_login()
-# ==============================
-# app.py — Crime Pattern Dashboard (FULLY UPDATED with Alerts & Notifications + Merge Fix)
-# ==============================
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import numpy as np
-import json
-import io
-import os
-import tempfile
-from datetime import datetime
-from fpdf import FPDF
-from utils import authenticate_user, create_user
-
-st.set_page_config(page_title="Crime Pattern Dashboard", layout="wide")
-
-# -------------------------------------------------------------------
-# Session State
-# -------------------------------------------------------------------
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-if "username" not in st.session_state:
-    st.session_state.username = ""
-if "role" not in st.session_state:
-    st.session_state.role = ""
-if "alerts_dismissed" not in st.session_state:
-    st.session_state.alerts_dismissed = False
-
-# -------------------------------------------------------------------
-# Ensure users.json exists (seed default users)
-# -------------------------------------------------------------------
-if not os.path.exists("users.json"):
-    with open("users.json", "w") as f:
-        json.dump({
-            "users": [
-                {"username": "public", "password": "public123", "role": "public"},
-                {"username": "analyst", "password": "analyst123", "role": "analyst"},
-                {"username": "law", "password": "law123", "role": "law_enforcement"}
-            ]
-        }, f, indent=2)
-
-# -------------------------------------------------------------------
-# Helpers
-# -------------------------------------------------------------------
-def save_plotly_as_image(fig):
-    try:
-        tmpfile = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
-        fig.write_image(tmpfile.name, format="png", engine="kaleido")
-        return tmpfile.name
-    except Exception as e:
-        st.warning(f"❌ Chart export failed: {e}. Chart will be omitted from PDF.")
-        return None
-
-
-def generate_pdf_report(df: pd.DataFrame, username: str, chart_paths: list[str]) -> io.BytesIO:
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Crime Report Summary", ln=1, align="C")
-    pdf.set_font("Arial", size=12)
-    pdf.ln(2)
-    pdf.cell(0, 8, f"Generated by: {username}", ln=1)
-    pdf.cell(0, 8, f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=1)
-    pdf.ln(5)
-
-    if "crime_type" in df.columns:
-        pdf.set_font("Arial", "B", 14)
-        pdf.cell(0, 8, "Crime Type Counts:", ln=1)
-        pdf.set_font("Arial", size=12)
-        summary = df["crime_type"].value_counts().reset_index()
-        summary.columns = ["crime_type", "count"]
-        for _, row in summary.iterrows():
-            pdf.cell(0, 6, f"{row['crime_type']}: {row['count']}", ln=1)
-        pdf.ln(5)
-
-    for path in chart_paths:
-        if path and os.path.exists(path):
-            try:
-                pdf.image(path, w=180)
-                pdf.ln(5)
-            except Exception:
-                pass
-
-    pdf_bytes = io.BytesIO()
-    pdf_output = pdf.output(dest="S").encode("latin-1")
-    pdf_bytes.write(pdf_output)
-    pdf_bytes.seek(0)
-    return pdf_bytes
-
-
-def load_uploaded_file(uploaded_file) -> pd.DataFrame | None:
-    try:
-        fname = uploaded_file.name.lower()
-        if fname.endswith(".csv"):
-            df = pd.read_csv(uploaded_file)
-        elif fname.endswith((".xls", ".xlsx")):
-            df = pd.read_excel(uploaded_file)
-        else:
-            st.error("Unsupported file type. Please upload CSV or Excel.")
-            return None
-        return df
-    except Exception as e:
-        st.error(f"Failed to read file: {e}")
-        return None
-
-# (get_alerts function remains unchanged — omitted here for brevity)
-
-# -------------------------------------------------------------------
-# Core Dashboard
-# -------------------------------------------------------------------
-def show_dashboard():
-    role = st.session_state.role
-    st.sidebar.markdown(f"*Logged in as:* **{st.session_state.username}** ({role})")
-    if st.sidebar.button("Logout", use_container_width=True):
-        st.session_state.logged_in = False
-        st.session_state.username = ""
-        st.session_state.role = ""
-        st.rerun()
-        return
-
-    st.title("🚔 Crime Pattern Analysis Dashboard")
-
-    uploaded_file = st.file_uploader(
-        "Upload Crime Data File (CSV or Excel)",
-        type=["csv", "xlsx", "xls"],
-    )
-
-    if uploaded_file is None:
-        st.info("Please upload a CSV or Excel file with columns: date, crime_type, latitude, longitude (and optionally region/city/district).")
-        return
-
-    raw_df = load_uploaded_file(uploaded_file)
-    if raw_df is None:
-        return
-
-    raw_df.columns = raw_df.columns.str.lower().str.strip()
-    required = {"date", "crime_type", "latitude", "longitude"}
-    if not required.issubset(raw_df.columns):
-        st.error(f"File must contain columns: {sorted(list(required))}")
-        st.stop()
-
-    st.markdown("### Raw Data Preview")
-    st.dataframe(raw_df.head(20), use_container_width=True)
-
-    raw_stats = {
-        "Rows": len(raw_df),
-        "Columns": list(raw_df.columns),
-        "Duplicate Rows": raw_df.duplicated().sum(),
-        "Missing Dates": raw_df["date"].isnull().sum(),
-        "Missing Latitudes": raw_df["latitude"].isnull().sum(),
-        "Missing Longitudes": raw_df["longitude"].isnull().sum(),
-    }
-    with st.expander("Raw Data Stats", expanded=False):
-        st.json(raw_stats)
-
-    df = raw_df.drop_duplicates().copy()
-    try:
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    except Exception:
-        pass
-    df = df.dropna(subset=["date", "latitude", "longitude", "crime_type"])
-
-    st.markdown("### Cleaned Data Preview")
-    st.dataframe(df.head(20), use_container_width=True)
-
-    clean_stats = {
-        "Rows": len(df),
-        "Columns": list(df.columns),
-        "Duplicate Rows": df.duplicated().sum(),
-        "Missing Dates": df["date"].isnull().sum(),
-        "Missing Latitudes": df["latitude"].isnull().sum(),
-        "Missing Longitudes": df["longitude"].isnull().sum(),
-    }
-    with st.expander("Cleaned Data Stats", expanded=False):
-        st.json(clean_stats)
-
-    # --- FIX: align dtypes before merge ---
-    if "date" in raw_df.columns and "date" in df.columns:
-        raw_df["date"] = pd.to_datetime(raw_df["date"], errors="coerce")
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-
-    removed_rows = raw_df.merge(df.drop_duplicates(), how="outer", indicator=True)
-    removed_rows = removed_rows[removed_rows["_merge"] == "left_only"].drop(columns=["_merge"])
-
-    diff_stats = {
-        "Rows Removed": raw_stats['Rows'] - clean_stats['Rows'],
-        "Duplicates Removed": raw_stats['Duplicate Rows'],
-        "Rows with Missing Key Columns Removed": raw_stats['Rows'] - (df.shape[0] + raw_stats['Duplicate Rows'])
-    }
-
-    st.markdown("### Data Cleaning Summary")
-    st.write(diff_stats)
-    if not removed_rows.empty:
-        with st.expander("Show rows removed during cleaning"):
-            st.dataframe(removed_rows, use_container_width=True)
-
-    # (rest of show_dashboard remains unchanged — alerts, filters, role dashboards, exports)
-
-# -------------------------------------------------------------------
-# Main
-# -------------------------------------------------------------------
+# Main flow
 if st.session_state.logged_in:
     show_dashboard()
 else:
