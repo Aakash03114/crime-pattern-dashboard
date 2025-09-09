@@ -1,5 +1,4 @@
-# app.py - Full ready-to-run Crime Pattern Dashboard with Alerts and fixed PDF export
-
+# app.py - Crime Pattern Dashboard (full) with PDF unicode-safe export
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -12,14 +11,11 @@ import glob
 from datetime import datetime
 from fpdf import FPDF
 
-# The utils module should provide authenticate_user(username,password) -> role or None
-# and create_user(username,password,role) -> True/False as in your previous project.
-from utils import authenticate_user, create_user
+from utils import authenticate_user, create_user  # your utils
 
-# Page config
 st.set_page_config(page_title="Crime Pattern Dashboard", layout="wide", initial_sidebar_state="expanded")
 
-# ---------------- Session State ----------------
+# ---------------- Session state ----------------
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "username" not in st.session_state:
@@ -27,7 +23,7 @@ if "username" not in st.session_state:
 if "role" not in st.session_state:
     st.session_state.role = ""
 
-# ---------------- Ensure users.json exists ----------------
+# ---------------- Ensure users.json ----------------
 USERS_FILE = "users.json"
 if not os.path.exists(USERS_FILE):
     with open(USERS_FILE, "w") as f:
@@ -40,14 +36,45 @@ if not os.path.exists(USERS_FILE):
         }, f, indent=2)
 
 
-# ---------------- Utility functions ----------------
+# ---------------- Helpers ----------------
+def sanitize_for_pdf(text: str) -> str:
+    """
+    Replace common emoji with ASCII tokens and ensure the resulting string is latin-1 encodable.
+    Uses 'replace' to substitute non-latin1 chars with '?' so FPDF won't crash.
+    """
+    if text is None:
+        return ""
+    try:
+        # Replace common emojis we use in app with short words
+        replacements = {
+            "🚨": "[ALERT]",
+            "📊": "[SPIKE]",
+            "⚠️": "[WARN]",
+            "⚠": "[WARN]",
+            "📄": "[REPORT]",
+            "🔥": "[HOTSPOT]",
+            "✅": "[OK]",
+            "→": "->",
+            "–": "-",  # en-dash
+            "—": "-",  # em-dash
+        }
+        for k, v in replacements.items():
+            text = text.replace(k, v)
+        # Finally ensure latin-1 safe encoding (replace unsupported chars with '?')
+        safe = text.encode('latin-1', errors='replace').decode('latin-1')
+        return safe
+    except Exception:
+        # If anything weird happens, strip to bytes-safe ascii fallback
+        return str(text).encode('ascii', errors='replace').decode('ascii')
+
+
 def save_plotly_as_image(fig):
-    """Save a Plotly figure to a temporary PNG file using kaleido; return filepath or None on failure."""
+    """Save Plotly figure to temp PNG using kaleido. Returns path or None."""
     try:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         tmp.close()
-        # requires kaleido installed
-        fig.write_image(tmp.name, format="png", engine="kaleido")
+        # write_image may require kaleido; engine arg deprecated in future versions
+        fig.write_image(tmp.name, format="png")
         return tmp.name
     except Exception as e:
         st.warning(f"Could not save chart image: {e}")
@@ -59,124 +86,121 @@ def save_plotly_as_image(fig):
         return None
 
 
-def cleanup_temp_images(pattern="/tmp/*.png"):
-    """Remove temp png files created during export. Accepts platform-specific patterns too."""
-    # also check current dir temp files
-    paths = glob.glob(os.path.join(tempfile.gettempdir(), "*.png")) + glob.glob("*.png")
-    for p in paths:
-        try:
-            os.remove(p)
-        except Exception:
-            pass
+def cleanup_temp_images():
+    """Remove temporary PNGs created in the system temp dir and current dir."""
+    tmp_dir = tempfile.gettempdir()
+    patterns = [os.path.join(tmp_dir, "*.png"), "*.png"]
+    for patt in patterns:
+        for p in glob.glob(patt):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
 
 
 def get_alerts(df, role):
-    """Return a list of alert messages based on data and role."""
+    """Return a list of alert strings (plain text) based on df and role."""
     alerts = []
     if df is None or df.empty:
         return alerts
-
-    # Protect against missing column
-    if "crime_type" in df.columns:
-        try:
+    try:
+        if "crime_type" in df.columns:
             vc = df["crime_type"].value_counts()
-            top_type = vc.idxmax()
             top_count = int(vc.max())
-            # Example threshold: more than 50 occurrences of a crime type
+            top_type = vc.idxmax()
             if top_count > 50:
                 alerts.append(f"🚨 High number of {top_type} incidents detected: {top_count} cases.")
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    # Spike detection: last 7 days account for >25% of records
     try:
         if "date" in df.columns:
             last_7d = df[df["date"] >= pd.Timestamp.now() - pd.Timedelta(days=7)]
             if len(last_7d) > 0 and (len(last_7d) / max(1, len(df))) > 0.25:
-                alerts.append(f"📊 {len(last_7d)} incidents reported in the last 7 days (>{int((len(last_7d)/len(df))*100)}% of data).")
+                pct = int((len(last_7d) / max(1, len(df))) * 100)
+                alerts.append(f"📊 {len(last_7d)} incidents reported in the last 7 days ({pct}% of records).")
     except Exception:
         pass
 
-    # Role-specific messages
     if role == "law_enforcement":
         alerts.append("⚠️ System maintenance scheduled for Sunday midnight (01:00–03:00).")
     return alerts
 
 
 def generate_pdf_report(df, username, chart_paths, alerts):
-    """
-    Generate a PDF file (as bytes) containing a header, alerts, summary, and images for charts.
-    Returns bytes, which can be passed to st.download_button.
-    """
+    """Create PDF bytes including header, alerts, summary counts and chart images.
+       All strings are sanitized for latin-1 to avoid FPDF UnicodeEncodeError."""
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Crime Report Summary", ln=1, align="C")
+    title = sanitize_for_pdf("Crime Report Summary")
+    pdf.cell(0, 10, title, ln=1, align="C")
     pdf.set_font("Arial", size=11)
     pdf.ln(2)
-    pdf.cell(0, 8, f"Generated by: {username}", ln=1)
-    pdf.cell(0, 8, f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=1)
+
+    byline = sanitize_for_pdf(f"Generated by: {username}")
+    pdf.cell(0, 8, byline, ln=1)
+    date_line = sanitize_for_pdf(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    pdf.cell(0, 8, date_line, ln=1)
     pdf.ln(4)
 
     # Alerts
     if alerts:
         pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 8, "Alerts & Notifications:", ln=1)
+        pdf.cell(0, 8, sanitize_for_pdf("Alerts & Notifications:"), ln=1)
         pdf.set_font("Arial", size=11)
         for a in alerts:
-            # use multi_cell to support long messages
-            pdf.multi_cell(0, 6, f"- {a}")
+            pdf.multi_cell(0, 6, sanitize_for_pdf(f"- {a}"))
         pdf.ln(4)
 
-    # Summary stats: crime counts
+    # Crime counts summary
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 8, "Crime Type Counts:", ln=1)
+    pdf.cell(0, 8, sanitize_for_pdf("Crime Type Counts:"), ln=1)
     pdf.set_font("Arial", size=11)
     try:
         summary = df["crime_type"].value_counts().reset_index()
         summary.columns = ["crime_type", "count"]
         for _, row in summary.iterrows():
-            pdf.cell(0, 6, f"{row['crime_type']}: {int(row['count'])}", ln=1)
+            crime = sanitize_for_pdf(str(row["crime_type"]))
+            count = int(row["count"])
+            pdf.cell(0, 6, sanitize_for_pdf(f"{crime}: {count}"), ln=1)
         pdf.ln(4)
     except Exception:
-        pdf.cell(0, 6, "No crime type breakdown available.", ln=1)
+        pdf.cell(0, 6, sanitize_for_pdf("No crime type summary available."), ln=1)
         pdf.ln(4)
 
-    # Add provided chart images
+    # Add chart images
     for path in chart_paths:
         if path and os.path.exists(path):
             try:
-                # New page if the image is large
                 pdf.image(path, w=180)
-                pdf.ln(6)
+                pdf.ln(5)
             except Exception:
-                # skip problematic image
+                # skip images that cause issues
                 pass
 
-    # Save PDF to a temp file and return bytes
+    # write to temp pdf and return bytes
     tmp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     tmp_pdf.close()
     pdf.output(tmp_pdf.name)
     with open(tmp_pdf.name, "rb") as f:
         pdf_bytes = f.read()
-
-    # cleanup temporary pdf file (we already read it into memory)
+    # cleanup pdf file
     try:
         os.remove(tmp_pdf.name)
     except Exception:
         pass
-
     return pdf_bytes
 
 
-# ---------------- Login / Signup UI ----------------
+# ---------------- Login / Signup ----------------
 def show_login():
     st.markdown(
         """
-        <div style="max-width:480px; margin:auto; padding:2rem; background:#2A2A33; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.08);">
-            <h2 style="text-align:center; color:FFFFFF; margin-bottom:0.25rem;">Login</h2>
-            <p style="text-align:center; margin-top: -4px;color:FFFFFF; font-size:13px;">Enter credentials to access the dashboard</p>
+        <div style="max-width:480px; margin:auto; padding:1.6rem; background:#2A2A33; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.08);">
+          <h2 style="text-align:center; color:FFFFFF; margin-bottom:4px;">Login</h2>
+          <p style="text-align:center; color:FFFFFF; margin-top:-6px; font-size:13px;">Enter credentials to access the dashboard</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -187,7 +211,6 @@ def show_login():
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
         role_select = st.selectbox("Role", ["public", "analyst", "law_enforcement"])
-
         if st.button("Login"):
             role = authenticate_user(username, password)
             if role and role == role_select:
@@ -195,7 +218,6 @@ def show_login():
                 st.session_state.username = username
                 st.session_state.role = role
                 st.success(f"Logged in as {username} ({role})")
-                # rerun so main flow will pick up logged_in state
                 try:
                     st.experimental_rerun()
                 except Exception:
@@ -220,7 +242,7 @@ def show_login():
                 st.error("Username already exists.")
 
 
-# ---------------- Main Dashboard ----------------
+# ---------------- Dashboard ----------------
 def show_dashboard():
     role = st.session_state.role
     username = st.session_state.username
@@ -237,14 +259,14 @@ def show_dashboard():
         return
 
     st.title("🚔 Crime Pattern Analysis Dashboard")
-    st.markdown("Upload a CSV or Excel file containing columns: `date`, `crime_type`, `latitude`, `longitude`. Optional columns: `region`, `city`, `district`.")
+    st.markdown("Upload a CSV or Excel file containing columns: `date`, `crime_type`, `latitude`, `longitude` (optional: region/city/district).")
 
     uploaded_file = st.file_uploader("Upload Crime Data File (CSV or Excel)", type=["csv", "xlsx", "xls"])
     if uploaded_file is None:
         st.info("Please upload a CSV or Excel file with columns: date, crime_type, latitude, longitude.")
         return
 
-    # ---------------- Load file robustly ----------------
+    # Load file
     try:
         fname = uploaded_file.name.lower()
         if fname.endswith(".csv"):
@@ -255,9 +277,7 @@ def show_dashboard():
         st.error(f"Failed to read file: {e}")
         return
 
-    # normalize columns
     raw_df.columns = raw_df.columns.str.lower().str.strip()
-
     required = {"date", "crime_type", "latitude", "longitude"}
     if not required.issubset(set(raw_df.columns)):
         st.error(f"File must contain columns: {', '.join(required)}. Found: {list(raw_df.columns)}")
@@ -268,41 +288,36 @@ def show_dashboard():
     st.dataframe(raw_df.head(20), use_container_width=True)
 
     raw_stats = {
-        "Rows": len(raw_df),
+        "Rows": int(len(raw_df)),
         "Columns": list(raw_df.columns),
         "Duplicate Rows": int(raw_df.duplicated().sum()),
         "Missing Dates": int(raw_df["date"].isnull().sum()),
         "Missing Latitudes": int(raw_df["latitude"].isnull().sum()),
         "Missing Longitudes": int(raw_df["longitude"].isnull().sum())
     }
-
     st.markdown("**Raw Data Stats**")
     st.write(raw_stats)
 
-    # ---------------- Cleaning ----------------
+    # Cleaning
     df = raw_df.copy()
-    df = df.drop_duplicates()
-    # convert date to datetime, coerce errors
+    df = df.drop_duplicates().reset_index(drop=True)
     try:
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
     except Exception:
-        # if conversion fails, leave as-is and drop nulls later
         pass
-
     df = df.dropna(subset=["date", "latitude", "longitude", "crime_type"]).reset_index(drop=True)
 
     st.markdown("### Cleaned Data Preview")
     st.dataframe(df.head(20), use_container_width=True)
 
     clean_stats = {
-        "Rows": len(df),
+        "Rows": int(len(df)),
         "Columns": list(df.columns),
         "Duplicate Rows": int(df.duplicated().sum()),
         "Missing Dates": int(df["date"].isnull().sum()) if "date" in df.columns else 0,
         "Missing Latitudes": int(df["latitude"].isnull().sum()) if "latitude" in df.columns else 0,
         "Missing Longitudes": int(df["longitude"].isnull().sum()) if "longitude" in df.columns else 0
     }
-
     st.markdown("**Cleaned Data Stats**")
     st.write(clean_stats)
 
@@ -314,16 +329,14 @@ def show_dashboard():
     st.markdown("**Data Cleaning Summary**")
     st.write(diff_stats)
 
-    # ---------------- Sidebar Filters ----------------
+    # Sidebar filters
     st.sidebar.header("Filters")
-
-    # Crime type filter
     crime_types = sorted(df["crime_type"].dropna().unique().tolist())
     selected_types = st.sidebar.multiselect("Crime Type", crime_types, default=crime_types)
     if selected_types:
         df = df[df["crime_type"].isin(selected_types)]
 
-    # Date range filter
+    # Date range
     if "date" in df.columns and not df.empty:
         try:
             min_date = df["date"].min().date()
@@ -335,7 +348,7 @@ def show_dashboard():
         except Exception:
             pass
 
-    # Hour filter
+    # Hour
     if "date" in df.columns and not df.empty:
         df["hour"] = df["date"].dt.hour
         hour_range = st.sidebar.slider("Hour Range (0–23)", 0, 23, (0, 23), step=1)
@@ -343,7 +356,7 @@ def show_dashboard():
         avail_hours = sorted(df["hour"].dropna().unique().tolist())
         st.sidebar.caption(f"Available hours after filters: {avail_hours}" if avail_hours else "No records in selected hour range.")
 
-    # Region filter: prefer an existing column; otherwise, derive grid
+    # Region filter or grid
     region_cols = [c for c in df.columns if c.lower() in ["region", "city", "district"]]
     if region_cols:
         region_col = region_cols[0]
@@ -363,34 +376,31 @@ def show_dashboard():
             df = df[df["region_grid"].isin(selected_grids)]
 
     if df.empty:
-        st.warning("No data matches current filters. Try expanding the filters.")
+        st.warning("No data matches the selected filters. Try expanding selections.")
         return
 
-    # ---------------- Alerts ----------------
+    # Alerts
     alerts = get_alerts(df, role)
     if alerts:
         st.markdown("## 🚨 Alerts & Notifications")
         for a in alerts:
             st.warning(a)
 
-    # ---------------- Role-based Views ----------------
-    chart_paths = []  # will collect image paths to embed in PDF
+    chart_paths = []
 
+    # Role-specific views
     if role == "public":
-        st.info("Public View: Aggregated summary of crimes")
-        st.subheader("Crime Frequency by Type")
+        st.info("Public View: Aggregated summary")
         vc = df["crime_type"].value_counts().reset_index()
         vc.columns = ["crime_type", "count"]
-        fig_bar = px.bar(vc, x="crime_type", y="count", title="Crime Frequency by Type",
-                         labels={"crime_type": "Crime Type", "count": "Count"})
+        fig_bar = px.bar(vc, x="crime_type", y="count", title="Crime Frequency by Type", labels={"crime_type": "Crime Type", "count": "Count"})
         st.plotly_chart(fig_bar, use_container_width=True)
         p = save_plotly_as_image(fig_bar)
         if p:
             chart_paths.append(p)
 
     elif role == "analyst":
-        st.success("Analyst View: Trends and summaries")
-        st.subheader("Crime Trend Over Time")
+        st.success("Analyst View")
         period = st.radio("Granularity", ["Daily", "Weekly", "Monthly"], index=0, horizontal=True)
         if period == "Daily":
             trend_df = df.groupby(df["date"].dt.date).size().reset_index(name="count")
@@ -400,7 +410,7 @@ def show_dashboard():
             trend_df = df.groupby(df["date"].dt.to_period("W")).size().reset_index(name="count")
             trend_df["date"] = trend_df["date"].astype(str)
             xcol = "date"
-        else:  # Monthly
+        else:
             trend_df = df.groupby(df["date"].dt.to_period("M")).size().reset_index(name="count")
             trend_df["date"] = trend_df["date"].astype(str)
             xcol = "date"
@@ -412,7 +422,7 @@ def show_dashboard():
         if p:
             chart_paths.append(p)
 
-        # Additional analyst visuals (heatmap by hour vs crime_type)
+        # Hour vs Crime heat table
         st.subheader("Hourly Heatmap by Crime Type (counts)")
         try:
             heat_df = df.groupby([df["hour"], df["crime_type"]]).size().reset_index(name="count")
@@ -422,28 +432,27 @@ def show_dashboard():
             st.info("Not enough data for heatmap.")
 
     elif role == "law_enforcement":
-        st.success("Law Enforcement View: Full access and exports")
-        st.subheader("Raw Filtered Data")
+        st.success("Law Enforcement View")
+        st.subheader("Filtered Raw Data")
         st.dataframe(df, use_container_width=True)
 
-        # Map of incidents
-        st.subheader("Crime Incidents Map (by type)")
+        # Map
+        st.subheader("Crime Incidents Map")
         try:
             map_df = df.dropna(subset=["latitude", "longitude"])
             if not map_df.empty:
-                fig_map = px.scatter_mapbox(map_df, lat="latitude", lon="longitude", color="crime_type",
-                                            hover_name="crime_type", zoom=10, height=500,
-                                            mapbox_style="carto-positron", title="Crime Incidents by Type")
+                fig_map = px.scatter_mapbox(map_df, lat="latitude", lon="longitude", color="crime_type", hover_name="crime_type",
+                                            zoom=10, mapbox_style="carto-positron", title="Crime Incidents by Type", height=500)
                 st.plotly_chart(fig_map, use_container_width=True)
                 p = save_plotly_as_image(fig_map)
                 if p:
                     chart_paths.append(p)
             else:
-                st.info("No location data to plot on map.")
+                st.info("No geolocation data to plot.")
         except Exception as e:
             st.error(f"Map error: {e}")
 
-        # Forecasting: Prophet
+        # Forecasting with Prophet
         st.subheader("📈 Crime Forecast (Next 30 days)")
         try:
             from prophet import Prophet
@@ -451,18 +460,14 @@ def show_dashboard():
             ts.rename(columns={"date": "ds"}, inplace=True)
             ts = ts.sort_values("ds")
             if len(ts) < 2:
-                st.warning("Not enough historical daily data to build a forecast (need at least 2 days).")
+                st.warning("Not enough daily history to forecast (need at least 2 days).")
             else:
                 model = Prophet()
                 model.fit(ts)
                 future = model.make_future_dataframe(periods=30)
                 forecast = model.predict(future)
 
-                # Build plotly figure for forecast with confidence interval and actuals
-                fig_fore = px.line(forecast, x="ds", y="yhat", labels={"ds": "Date", "yhat": "Predicted"})
-                # add actuals if overlap
-                merged = pd.merge(forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]], ts, on="ds", how="left")
-                # add confidence band as filled area via add_traces
+                fig_fore = px.line(forecast, x="ds", y="yhat", labels={"ds": "Date", "yhat": "Predicted"}, title="Forecast (yhat)")
                 fig_fore.add_traces([
                     dict(
                         x=list(forecast["ds"]) + list(forecast["ds"][::-1]),
@@ -474,11 +479,9 @@ def show_dashboard():
                         name="Confidence Interval"
                     )
                 ])
-                # add actual
+                merged = forecast.merge(ts, left_on="ds", right_on="ds", how="left")
                 if "y" in merged.columns and merged["y"].notnull().any():
                     fig_fore.add_scatter(x=merged["ds"], y=merged["y"], mode="markers+lines", name="Actual")
-                fig_fore.update_layout(title="Forecast (with confidence interval)")
-
                 st.plotly_chart(fig_fore, use_container_width=True)
                 p = save_plotly_as_image(fig_fore)
                 if p:
@@ -486,20 +489,21 @@ def show_dashboard():
         except Exception as e:
             st.error(f"Forecasting failed: {e}")
 
-        # Hotspot detection using KMeans
+        # Hotspot detection
         st.subheader("🔥 Crime Hotspot Detection (KMeans)")
         try:
             from sklearn.cluster import KMeans
             loc_df = df[["latitude", "longitude"]].dropna()
             if len(loc_df) < 3:
-                st.warning("At least 3 location points are required for hotspot detection.")
+                st.warning("Need at least 3 points for hotspot detection.")
             else:
-                k = st.slider("Number of clusters (k)", 2, min(12, max(2, len(loc_df)//2)), min(3, max(2, len(loc_df)//2)))
+                max_k = min(12, max(2, len(loc_df)//2))
+                default_k = min(3, max_k)
+                k = st.slider("Clusters (k)", 2, max_k, default_k)
                 kmeans = KMeans(n_clusters=k, random_state=42)
                 loc_df = loc_df.copy()
                 loc_df["cluster"] = kmeans.fit_predict(loc_df)
-                fig_hot = px.scatter_mapbox(loc_df, lat="latitude", lon="longitude", color="cluster",
-                                            title="Crime Hotspots (clustered)", mapbox_style="carto-positron", zoom=10, height=500)
+                fig_hot = px.scatter_mapbox(loc_df, lat="latitude", lon="longitude", color="cluster", title="Hotspots (KMeans)", mapbox_style="carto-positron", zoom=10, height=500)
                 st.plotly_chart(fig_hot, use_container_width=True)
                 p = save_plotly_as_image(fig_hot)
                 if p:
@@ -507,38 +511,33 @@ def show_dashboard():
         except Exception as e:
             st.error(f"Hotspot detection error: {e}")
 
-        # Export PDF (includes alerts + selected charts)
+        # Export PDF
         st.subheader("📄 Export Report (PDF)")
-        # Add a small checkbox to include only top charts or all charts
-        include_all = st.checkbox("Include charts in PDF", value=True)
+        include_charts = st.checkbox("Include charts in PDF", value=True)
         if st.button("Generate PDF Report"):
-            # generate pdf bytes
-            pdf_bytes = generate_pdf_report(df, username, chart_paths if include_all else [], alerts)
-            # cleanup PNG temp files after creating PDF (to keep environment clean)
+            pdf_bytes = generate_pdf_report(df, username, chart_paths if include_charts else [], alerts)
+            # cleanup temp pngs after embedding
             cleanup_temp_images()
-            # show download
             st.download_button("Download Report (PDF)", data=pdf_bytes, file_name=f"crime_report_{username}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf", mime="application/pdf")
 
-    # ---------------- Summary Metrics ----------------
+    # Summary Metrics
     st.markdown("## Summary Metrics")
     cols = st.columns(3)
     try:
-        total_incidents = len(df)
-        unique_crimes = int(df["crime_type"].nunique())
-        date_min = df["date"].min().date()
-        date_max = df["date"].max().date()
-        cols[0].metric("Total Incidents", total_incidents)
-        cols[1].metric("Unique Crime Types", unique_crimes)
-        cols[2].metric("Date Range", f"{date_min} → {date_max}")
+        total = len(df)
+        unique_ct = int(df["crime_type"].nunique())
+        ds_min = df["date"].min().date()
+        ds_max = df["date"].max().date()
+        cols[0].metric("Total Incidents", total)
+        cols[1].metric("Crime Types", unique_ct)
+        cols[2].metric("Date Range", f"{ds_min} - {ds_max}")
     except Exception:
         cols[0].metric("Total Incidents", "—")
-        cols[1].metric("Unique Crime Types", "—")
+        cols[1].metric("Crime Types", "—")
         cols[2].metric("Date Range", "—")
 
-    # End of show_dashboard()
 
-
-# ---------------- App entrypoint ----------------
+# ---------------- Entrypoint ----------------
 def main():
     if st.session_state.logged_in:
         show_dashboard()
@@ -548,4 +547,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
