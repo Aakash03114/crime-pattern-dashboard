@@ -490,7 +490,7 @@ def show_dashboard():
             st.error(f"Forecasting failed: {e}")
 
         # Hotspot detection
-        st.subheader("🔥 Crime Hotspot Detection (KMeans)")
+        st.subheader("🔥 Crime Hotspot Detection ")
         try:
             from sklearn.cluster import KMeans
             loc_df = df[["latitude", "longitude"]].dropna()
