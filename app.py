@@ -38,14 +38,9 @@ if not os.path.exists(USERS_FILE):
 
 # ---------------- Helpers ----------------
 def sanitize_for_pdf(text: str) -> str:
-    """
-    Replace common emoji with ASCII tokens and ensure the resulting string is latin-1 encodable.
-    Uses 'replace' to substitute non-latin1 chars with '?' so FPDF won't crash.
-    """
     if text is None:
         return ""
     try:
-        # Replace common emojis we use in app with short words
         replacements = {
             "🚨": "[ALERT]",
             "📊": "[SPIKE]",
@@ -55,25 +50,21 @@ def sanitize_for_pdf(text: str) -> str:
             "🔥": "[HOTSPOT]",
             "✅": "[OK]",
             "→": "->",
-            "–": "-",  # en-dash
-            "—": "-",  # em-dash
+            "–": "-",
+            "—": "-",
         }
         for k, v in replacements.items():
             text = text.replace(k, v)
-        # Finally ensure latin-1 safe encoding (replace unsupported chars with '?')
         safe = text.encode('latin-1', errors='replace').decode('latin-1')
         return safe
     except Exception:
-        # If anything weird happens, strip to bytes-safe ascii fallback
         return str(text).encode('ascii', errors='replace').decode('ascii')
 
 
 def save_plotly_as_image(fig):
-    """Save Plotly figure to temp PNG using kaleido. Returns path or None."""
     try:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         tmp.close()
-        # write_image may require kaleido; engine arg deprecated in future versions
         fig.write_image(tmp.name, format="png")
         return tmp.name
     except Exception as e:
@@ -87,7 +78,6 @@ def save_plotly_as_image(fig):
 
 
 def cleanup_temp_images():
-    """Remove temporary PNGs created in the system temp dir and current dir."""
     tmp_dir = tempfile.gettempdir()
     patterns = [os.path.join(tmp_dir, "*.png"), "*.png"]
     for patt in patterns:
@@ -99,7 +89,6 @@ def cleanup_temp_images():
 
 
 def get_alerts(df, role):
-    """Return a list of alert strings (plain text) based on df and role."""
     alerts = []
     if df is None or df.empty:
         return alerts
@@ -128,8 +117,6 @@ def get_alerts(df, role):
 
 
 def generate_pdf_report(df, username, chart_paths, alerts):
-    """Create PDF bytes including header, alerts, summary counts and chart images.
-       All strings are sanitized for latin-1 to avoid FPDF UnicodeEncodeError."""
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
@@ -145,7 +132,6 @@ def generate_pdf_report(df, username, chart_paths, alerts):
     pdf.cell(0, 8, date_line, ln=1)
     pdf.ln(4)
 
-    # Alerts
     if alerts:
         pdf.set_font("Arial", "B", 12)
         pdf.cell(0, 8, sanitize_for_pdf("Alerts & Notifications:"), ln=1)
@@ -154,7 +140,6 @@ def generate_pdf_report(df, username, chart_paths, alerts):
             pdf.multi_cell(0, 6, sanitize_for_pdf(f"- {a}"))
         pdf.ln(4)
 
-    # Crime counts summary
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 8, sanitize_for_pdf("Crime Type Counts:"), ln=1)
     pdf.set_font("Arial", size=11)
@@ -170,23 +155,19 @@ def generate_pdf_report(df, username, chart_paths, alerts):
         pdf.cell(0, 6, sanitize_for_pdf("No crime type summary available."), ln=1)
         pdf.ln(4)
 
-    # Add chart images
     for path in chart_paths:
         if path and os.path.exists(path):
             try:
                 pdf.image(path, w=180)
                 pdf.ln(5)
             except Exception:
-                # skip images that cause issues
                 pass
 
-    # write to temp pdf and return bytes
     tmp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     tmp_pdf.close()
     pdf.output(tmp_pdf.name)
     with open(tmp_pdf.name, "rb") as f:
         pdf_bytes = f.read()
-    # cleanup pdf file
     try:
         os.remove(tmp_pdf.name)
     except Exception:
@@ -266,7 +247,6 @@ def show_dashboard():
         st.info("Please upload a CSV or Excel file with columns: date, crime_type, latitude, longitude.")
         return
 
-    # Load file
     try:
         fname = uploaded_file.name.lower()
         if fname.endswith(".csv"):
@@ -283,7 +263,6 @@ def show_dashboard():
         st.error(f"File must contain columns: {', '.join(required)}. Found: {list(raw_df.columns)}")
         return
 
-    # Show raw preview and stats
     st.markdown("### Raw Data Preview")
     st.dataframe(raw_df.head(20), use_container_width=True)
 
@@ -298,7 +277,6 @@ def show_dashboard():
     st.markdown("**Raw Data Stats**")
     st.write(raw_stats)
 
-    # Cleaning
     df = raw_df.copy()
     df = df.drop_duplicates().reset_index(drop=True)
     try:
@@ -336,7 +314,6 @@ def show_dashboard():
     if selected_types:
         df = df[df["crime_type"].isin(selected_types)]
 
-    # Date range
     if "date" in df.columns and not df.empty:
         try:
             min_date = df["date"].min().date()
@@ -348,7 +325,6 @@ def show_dashboard():
         except Exception:
             pass
 
-    # Hour
     if "date" in df.columns and not df.empty:
         df["hour"] = df["date"].dt.hour
         hour_range = st.sidebar.slider("Hour Range (0–23)", 0, 23, (0, 23), step=1)
@@ -356,7 +332,6 @@ def show_dashboard():
         avail_hours = sorted(df["hour"].dropna().unique().tolist())
         st.sidebar.caption(f"Available hours after filters: {avail_hours}" if avail_hours else "No records in selected hour range.")
 
-    # Region filter or grid
     region_cols = [c for c in df.columns if c.lower() in ["region", "city", "district"]]
     if region_cols:
         region_col = region_cols[0]
@@ -379,7 +354,6 @@ def show_dashboard():
         st.warning("No data matches the selected filters. Try expanding selections.")
         return
 
-    # Alerts
     alerts = get_alerts(df, role)
     if alerts:
         st.markdown("## 🚨 Alerts & Notifications")
@@ -388,12 +362,12 @@ def show_dashboard():
 
     chart_paths = []
 
-    # Role-specific views
     if role == "public":
         st.info("Public View: Aggregated summary")
         vc = df["crime_type"].value_counts().reset_index()
         vc.columns = ["crime_type", "count"]
-        fig_bar = px.bar(vc, x="crime_type", y="count", title="Crime Frequency by Type", labels={"crime_type": "Crime Type", "count": "Count"})
+        fig_bar = px.bar(vc, x="crime_type", y="count", title="Crime Frequency by Type",
+                         labels={"crime_type": "Crime Type", "count": "Count"})
         st.plotly_chart(fig_bar, use_container_width=True)
         p = save_plotly_as_image(fig_bar)
         if p:
@@ -422,7 +396,6 @@ def show_dashboard():
         if p:
             chart_paths.append(p)
 
-        # Hour vs Crime heat table
         st.subheader("Hourly Heatmap by Crime Type (counts)")
         try:
             heat_df = df.groupby([df["hour"], df["crime_type"]]).size().reset_index(name="count")
@@ -436,13 +409,15 @@ def show_dashboard():
         st.subheader("Filtered Raw Data")
         st.dataframe(df, use_container_width=True)
 
-        # Map
         st.subheader("Crime Incidents Map")
         try:
             map_df = df.dropna(subset=["latitude", "longitude"])
             if not map_df.empty:
-                fig_map = px.scatter_mapbox(map_df, lat="latitude", lon="longitude", color="crime_type", hover_name="crime_type",
-                                            zoom=10, mapbox_style="carto-positron", title="Crime Incidents by Type", height=500)
+                fig_map = px.scatter_mapbox(
+                    map_df, lat="latitude", lon="longitude", color="crime_type",
+                    hover_name="crime_type", zoom=10, mapbox_style="carto-positron",
+                    title="Crime Incidents by Type", height=500
+                )
                 st.plotly_chart(fig_map, use_container_width=True)
                 p = save_plotly_as_image(fig_map)
                 if p:
@@ -452,7 +427,6 @@ def show_dashboard():
         except Exception as e:
             st.error(f"Map error: {e}")
 
-        # Forecasting with Prophet
         st.subheader("📈 Crime Forecast (Next 30 days)")
         try:
             from prophet import Prophet
@@ -467,7 +441,14 @@ def show_dashboard():
                 future = model.make_future_dataframe(periods=30)
                 forecast = model.predict(future)
 
-                fig_fore = px.line(forecast, x="ds", y="yhat", labels={"ds": "Date", "yhat": "Predicted"}, title="Forecast (yhat)")
+                compare_df = forecast.merge(ts, on="ds", how="left")
+
+                fig_fore = px.line(
+                    forecast, x="ds", y="yhat",
+                    labels={"ds": "Date", "yhat": "Predicted"},
+                    title="Crime Forecast (Prophet)"
+                )
+
                 fig_fore.add_traces([
                     dict(
                         x=list(forecast["ds"]) + list(forecast["ds"][::-1]),
@@ -479,17 +460,25 @@ def show_dashboard():
                         name="Confidence Interval"
                     )
                 ])
-                merged = forecast.merge(ts, left_on="ds", right_on="ds", how="left")
-                if "y" in merged.columns and merged["y"].notnull().any():
-                    fig_fore.add_scatter(x=merged["ds"], y=merged["y"], mode="markers+lines", name="Actual")
+
+                fig_fore.add_scatter(
+                    x=compare_df["ds"], y=compare_df["y"],
+                    mode="markers+lines", name="Actual"
+                )
+
+                fig_fore.add_scatter(
+                    x=forecast["ds"], y=forecast["yhat"],
+                    mode="lines", name="Predicted", line=dict(color="blue")
+                )
+
                 st.plotly_chart(fig_fore, use_container_width=True)
+
                 p = save_plotly_as_image(fig_fore)
                 if p:
                     chart_paths.append(p)
         except Exception as e:
             st.error(f"Forecasting failed: {e}")
 
-        # Hotspot detection
         st.subheader("🔥 Crime Hotspot Detection ")
         try:
             from sklearn.cluster import KMeans
@@ -503,7 +492,10 @@ def show_dashboard():
                 kmeans = KMeans(n_clusters=k, random_state=42)
                 loc_df = loc_df.copy()
                 loc_df["cluster"] = kmeans.fit_predict(loc_df)
-                fig_hot = px.scatter_mapbox(loc_df, lat="latitude", lon="longitude", color="cluster", title="Hotspots (KMeans)", mapbox_style="carto-positron", zoom=10, height=500)
+                fig_hot = px.scatter_mapbox(
+                    loc_df, lat="latitude", lon="longitude", color="cluster",
+                    title="Hotspots (KMeans)", mapbox_style="carto-positron", zoom=10, height=500
+                )
                 st.plotly_chart(fig_hot, use_container_width=True)
                 p = save_plotly_as_image(fig_hot)
                 if p:
@@ -511,16 +503,17 @@ def show_dashboard():
         except Exception as e:
             st.error(f"Hotspot detection error: {e}")
 
-        # Export PDF
         st.subheader("📄 Export Report (PDF)")
         include_charts = st.checkbox("Include charts in PDF", value=True)
         if st.button("Generate PDF Report"):
             pdf_bytes = generate_pdf_report(df, username, chart_paths if include_charts else [], alerts)
-            # cleanup temp pngs after embedding
             cleanup_temp_images()
-            st.download_button("Download Report (PDF)", data=pdf_bytes, file_name=f"crime_report_{username}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf", mime="application/pdf")
+            st.download_button(
+                "Download Report (PDF)", data=pdf_bytes,
+                file_name=f"crime_report_{username}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf"
+            )
 
-    # Summary Metrics
     st.markdown("## Summary Metrics")
     cols = st.columns(3)
     try:
