@@ -11,7 +11,7 @@ import glob
 from datetime import datetime
 from fpdf import FPDF
 
-from utils import authenticate_user, create_user  # your utils
+from utils import authenticate_user, create_user, load_users, save_users  # Assumed from original code comments
 
 st.set_page_config(page_title="Crime Pattern Dashboard", layout="wide", initial_sidebar_state="expanded")
 
@@ -22,6 +22,8 @@ if "username" not in st.session_state:
     st.session_state.username = ""
 if "role" not in st.session_state:
     st.session_state.role = ""
+if "show_forgot_pw" not in st.session_state:
+    st.session_state.show_forgot_pw = False
 
 # ---------------- Ensure users.json ----------------
 USERS_FILE = "users.json"
@@ -55,13 +57,16 @@ def sanitize_for_pdf(text: str) -> str:
         }
         for k, v in replacements.items():
             text = text.replace(k, v)
+        # Attempt Latin-1 encoding for broader character support, replacing errors
         safe = text.encode('latin-1', errors='replace').decode('latin-1')
         return safe
     except Exception:
+        # Fallback to pure ASCII replacement
         return str(text).encode('ascii', errors='replace').decode('ascii')
 
 
 def save_plotly_as_image(fig):
+    tmp = None
     try:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         tmp.close()
@@ -70,7 +75,7 @@ def save_plotly_as_image(fig):
     except Exception as e:
         st.warning(f"Could not save chart image: {e}")
         try:
-            if os.path.exists(tmp.name):
+            if tmp and os.path.exists(tmp.name):
                 os.remove(tmp.name)
         except Exception:
             pass
@@ -104,9 +109,12 @@ def get_alerts(df, role):
 
     try:
         if "date" in df.columns:
-            last_7d = df[df["date"] >= pd.Timestamp.now() - pd.Timedelta(days=7)]
-            if len(last_7d) > 0 and (len(last_7d) / max(1, len(df))) > 0.25:
-                pct = int((len(last_7d) / max(1, len(df))) * 100)
+            # Ensure 'date' column is datetime type before subtraction
+            df_dates = df.copy()
+            df_dates["date"] = pd.to_datetime(df_dates["date"], errors="coerce")
+            last_7d = df_dates[df_dates["date"] >= pd.Timestamp.now() - pd.Timedelta(days=7)]
+            if len(last_7d) > 0 and (len(last_7d) / max(1, len(df_dates.dropna(subset=['date'])))) > 0.25:
+                pct = int((len(last_7d) / max(1, len(df_dates))) * 100)
                 alerts.append(f"📊 {len(last_7d)} incidents reported in the last 7 days ({pct}% of records).")
     except Exception:
         pass
@@ -176,12 +184,51 @@ def generate_pdf_report(df, username, chart_paths, alerts):
 
 
 # ---------------- Login / Signup ----------------
+def show_forgot_password():
+    st.subheader("Reset Your Password")
+    uname = st.text_input("Enter your username", key="forgot_pw_user")
+    if not uname:
+        return
+    
+    # load_users and save_users must be in utils.py
+    try:
+        users = load_users() 
+    except Exception as e:
+        st.error(f"Error loading users: {e}. Ensure load_users() is correctly implemented in utils.py.")
+        return
+
+    user = next((u for u in users["users"] if u["username"] == uname), None)
+    if not user:
+        st.error("Username not found.")
+        return
+
+    new_pw = st.text_input("New password", type="password", key="forgot_pw_new")
+    confirm_pw = st.text_input("Confirm new password", type="password", key="forgot_pw_confirm")
+    if st.button("Reset Password"):
+        if not new_pw or not confirm_pw:
+            st.warning("Please fill both password fields.")
+        elif new_pw != confirm_pw:
+            st.error("Passwords do not match.")
+        else:
+            user["password"] = new_pw
+            try:
+                save_users(users)  # Assumes save_users accepts the entire user structure
+                st.success("Password reset! You may now sign in with your new password.")
+                st.session_state.show_forgot_pw = False
+            except Exception as e:
+                st.error(f"Error saving new password: {e}. Ensure save_users() is correctly implemented in utils.py.")
+
+
 def show_login():
+    if st.session_state.get("show_forgot_pw", False):
+        show_forgot_password()
+        return
+
     st.markdown(
         """
         <div style="max-width:480px; margin:auto; padding:1.6rem; background:#2A2A33; border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,0.08);">
-          <h2 style="text-align:center; color:FFFFFF; margin-bottom:4px;">Login</h2>
-          <p style="text-align:center; color:FFFFFF; margin-top:-6px; font-size:13px;">Enter credentials to access the dashboard</p>
+            <h2 style="text-align:center; color:FFFFFF; margin-bottom:4px;">Login</h2>
+            <p style="text-align:center; color:FFFFFF; margin-top:-6px; font-size:13px;">Enter credentials to access the dashboard</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -193,6 +240,7 @@ def show_login():
         password = st.text_input("Password", type="password")
         role_select = st.selectbox("Role", ["public", "analyst", "law_enforcement"])
         if st.button("Login"):
+            # authenticate_user must be in utils.py
             role = authenticate_user(username, password)
             if role and role == role_select:
                 st.session_state.logged_in = True
@@ -205,6 +253,12 @@ def show_login():
                     pass
             else:
                 st.error("Invalid credentials or role mismatch.")
+        
+        # Forgot password button inside col2 for alignment
+        if st.button("Forgot Password?"):
+            st.session_state.show_forgot_pw = True
+            st.experimental_rerun() # Rerun to show the forgot password form
+
 
     st.markdown("---")
     st.subheader("New User Signup")
@@ -216,6 +270,7 @@ def show_login():
         if not new_username or not new_password:
             st.warning("Provide both username and password.")
         else:
+            # create_user must be in utils.py
             success = create_user(new_username, new_password, new_role)
             if success:
                 st.success("Account created. Please log in.")
@@ -309,6 +364,11 @@ def show_dashboard():
 
     # Sidebar filters
     st.sidebar.header("Filters")
+    
+    if df.empty:
+        st.warning("No valid data remains after initial cleaning. Please check your file.")
+        return
+
     all_crime_types = sorted(df["crime_type"].dropna().unique().tolist())
     crime_search = st.sidebar.text_input("Search Crime Types")
     if crime_search:
@@ -321,37 +381,41 @@ def show_dashboard():
         options=filtered_types,
         default=filtered_types if not crime_search else filtered_types
     )
+    
     if selected_types:
         df = df[df["crime_type"].isin(selected_types)]
 
-        if "date" in df.columns and not df.empty:
-            try:
-                min_date = df["date"].min().date()
-                max_date = df["date"].max().date()
-                date_range = st.sidebar.date_input("Date Range", [min_date, max_date])
-                if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-                    start, end = date_range
-                    df = df[(df["date"].dt.date >= start) & (df["date"].dt.date <= end)]
-            except Exception:
-                pass
+    if "date" in df.columns and not df.empty:
+        try:
+            min_date = df["date"].min().date()
+            max_date = df["date"].max().date()
+            date_range = st.sidebar.date_input("Date Range", [min_date, max_date])
+            if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
+                start, end = date_range
+                # Ensure the date comparison is done correctly
+                df = df[(df["date"].dt.date >= start) & (df["date"].dt.date <= end)]
+        except Exception:
+            pass
 
-        if "date" in df.columns and not df.empty:
-            df["hour"] = df["date"].dt.hour
-            hour_range = st.sidebar.slider("Hour Range (0–23)", 0, 23, (0, 23), step=1)
-            df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
-            avail_hours = sorted(df["hour"].dropna().unique().tolist())
-            st.sidebar.caption(f"Available hours after filters: {avail_hours}" if avail_hours else "No records in selected hour range.")
+    if "date" in df.columns and not df.empty:
+        df["hour"] = df["date"].dt.hour
+        hour_range = st.sidebar.slider("Hour Range (0–23)", 0, 23, (0, 23), step=1)
+        df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
+        avail_hours = sorted(df["hour"].dropna().unique().tolist())
+        st.sidebar.caption(f"Available hours after filters: {avail_hours}" if avail_hours else "No records in selected hour range.")
 
-        region_cols = [c for c in df.columns if c.lower() in ["region", "city", "district"]]
-        if region_cols:
-            region_col = region_cols[0]
-            region_vals = sorted(df[region_col].dropna().unique().tolist())
-            selected_regions = st.sidebar.multiselect("Region", region_vals, default=region_vals)
-            if selected_regions:
-                df = df[df[region_col].isin(selected_regions)]
-        else:
-            st.sidebar.markdown("**Region (derived from Lat/Lon grid)**")
-            grid_size = st.sidebar.slider("Grid size (degrees)", 0.01, 0.5, 0.05, 0.01)
+    region_cols = [c for c in df.columns if c.lower() in ["region", "city", "district"]]
+    if region_cols:
+        region_col = region_cols[0]
+        region_vals = sorted(df[region_col].dropna().unique().tolist())
+        selected_regions = st.sidebar.multiselect("Region", region_vals, default=region_vals)
+        if selected_regions:
+            df = df[df[region_col].isin(selected_regions)]
+    else:
+        st.sidebar.markdown("**Region (derived from Lat/Lon grid)**")
+        grid_size = st.sidebar.slider("Grid size (degrees)", 0.01, 0.5, 0.05, 0.01)
+        # Only perform grid binning if lat/lon are present and non-empty after filtering
+        if not df.empty and "latitude" in df.columns and "longitude" in df.columns:
             lat_bin = np.round(df["latitude"] / grid_size) * grid_size
             lon_bin = np.round(df["longitude"] / grid_size) * grid_size
             df["region_grid"] = lat_bin.round(4).astype(str) + "," + lon_bin.round(4).astype(str)
@@ -359,185 +423,209 @@ def show_dashboard():
             selected_grids = st.sidebar.multiselect("Region (grid)", grid_regions, default=grid_regions)
             if selected_grids:
                 df = df[df["region_grid"].isin(selected_grids)]
+        else:
+            st.sidebar.info("Cannot perform grid filtering: Data is empty or missing lat/lon.")
 
-        if df.empty:
-            st.warning("No data matches the selected filters. Try expanding selections.")
-            return
 
-        alerts = get_alerts(df, role)
-        if alerts:
-            st.markdown("## 🚨 Alerts & Notifications")
-            for a in alerts:
-                st.warning(a)
+    if df.empty:
+        st.warning("No data matches the selected filters. Try expanding selections.")
+        return
 
-        chart_paths = []
+    alerts = get_alerts(df, role)
+    if alerts:
+        st.markdown("## 🚨 Alerts & Notifications")
+        for a in alerts:
+            st.warning(a)
 
-        if role == "public":
-            st.info("Public View: Aggregated summary")
-            vc = df["crime_type"].value_counts().reset_index()
-            vc.columns = ["crime_type", "count"]
-            fig_bar = px.bar(vc, x="crime_type", y="count", title="Crime Frequency by Type",
-                             labels={"crime_type": "Crime Type", "count": "Count"})
-            st.plotly_chart(fig_bar, use_container_width=True)
-            p = save_plotly_as_image(fig_bar)
-            if p:
-                chart_paths.append(p)
+    chart_paths = []
+    
+    st.markdown("---") # Separator before role-based content
+    
+    if role == "public":
+        st.info("Public View: Aggregated summary")
+        vc = df["crime_type"].value_counts().reset_index()
+        vc.columns = ["crime_type", "count"]
+        fig_bar = px.bar(vc, x="crime_type", y="count", title="Crime Frequency by Type",
+                         labels={"crime_type": "Crime Type", "count": "Count"})
+        st.plotly_chart(fig_bar, use_container_width=True)
+        p = save_plotly_as_image(fig_bar)
+        if p:
+            chart_paths.append(p)
 
-        elif role == "analyst":
-            st.success("Analyst View")
-            period = st.radio("Granularity", ["Daily", "Weekly", "Monthly"], index=0, horizontal=True)
-            if period == "Daily":
-                trend_df = df.groupby(df["date"].dt.date).size().reset_index(name="count")
-                trend_df.rename(columns={"date": "ds"}, inplace=True)
-                xcol = trend_df.columns[0]
-            elif period == "Weekly":
-                trend_df = df.groupby(df["date"].dt.to_period("W")).size().reset_index(name="count")
-                trend_df["date"] = trend_df["date"].astype(str)
-                xcol = "date"
+    elif role == "analyst":
+        st.success("Analyst View")
+        period = st.radio("Granularity", ["Daily", "Weekly", "Monthly"], index=0, horizontal=True)
+        if period == "Daily":
+            trend_df = df.groupby(df["date"].dt.date).size().reset_index(name="count")
+            trend_df.rename(columns={"date": "ds"}, inplace=True)
+            xcol = trend_df.columns[0]
+        elif period == "Weekly":
+            trend_df = df.groupby(df["date"].dt.to_period("W")).size().reset_index(name="count")
+            trend_df["date"] = trend_df["date"].astype(str)
+            xcol = "date"
+        else:
+            trend_df = df.groupby(df["date"].dt.to_period("M")).size().reset_index(name="count")
+            trend_df["date"] = trend_df["date"].astype(str)
+            xcol = "date"
+
+        fig_trend = px.line(trend_df, x=xcol, y="count", markers=True, title=f"Crime Trend ({period})")
+        fig_trend.update_layout(xaxis_title=period, yaxis_title="Incidents")
+        st.plotly_chart(fig_trend, use_container_width=True)
+        p = save_plotly_as_image(fig_trend)
+        if p:
+            chart_paths.append(p)
+            
+        st.markdown("---")
+        st.subheader("Hourly Heatmap by Crime Type (counts)")
+        try:
+            heat_df = df.groupby([df["hour"], df["crime_type"]]).size().reset_index(name="count")
+            heat_pivot = heat_df.pivot_table(index="hour", columns="crime_type", values="count", fill_value=0)
+            st.dataframe(heat_pivot)
+        except Exception:
+            st.info("Not enough data for heatmap.")
+
+    elif role == "law_enforcement":
+        st.success("Law Enforcement View")
+        st.subheader("Filtered Raw Data")
+        st.dataframe(df, use_container_width=True)
+
+        st.markdown("---")
+        st.subheader("Crime Incidents Map")
+        try:
+            map_df = df.dropna(subset=["latitude", "longitude"])
+            if not map_df.empty:
+                fig_map = px.scatter_mapbox(
+                    map_df, lat="latitude", lon="longitude", color="crime_type",
+                    hover_name="crime_type", zoom=10, mapbox_style="carto-positron",
+                    title="Crime Incidents by Type", height=500
+                )
+                st.plotly_chart(fig_map, use_container_width=True)
+                p = save_plotly_as_image(fig_map)
+                if p:
+                    chart_paths.append(p)
             else:
-                trend_df = df.groupby(df["date"].dt.to_period("M")).size().reset_index(name="count")
-                trend_df["date"] = trend_df["date"].astype(str)
-                xcol = "date"
+                st.info("No geolocation data to plot.")
+        except Exception as e:
+            st.error(f"Map error: {e}")
 
-            fig_trend = px.line(trend_df, x=xcol, y="count", markers=True, title=f"Crime Trend ({period})")
-            fig_trend.update_layout(xaxis_title=period, yaxis_title="Incidents")
-            st.plotly_chart(fig_trend, use_container_width=True)
-            p = save_plotly_as_image(fig_trend)
-            if p:
-                chart_paths.append(p)
+        st.markdown("---")
+        st.subheader("📈 Crime Forecast (Next 30 days)")
+        try:
+            # Requires prophet library to be installed: pip install prophet
+            from prophet import Prophet 
+            ts = df.groupby(df["date"].dt.floor("d")).size().reset_index(name="y")
+            ts.rename(columns={"date": "ds"}, inplace=True)
+            ts = ts.sort_values("ds")
+            if len(ts) < 2:
+                st.warning("Not enough daily history to forecast (need at least 2 days).")
+            else:
+                model = Prophet()
+                model.fit(ts)
+                future = model.make_future_dataframe(periods=30)
+                forecast = model.predict(future)
 
-            st.subheader("Hourly Heatmap by Crime Type (counts)")
-            try:
-                heat_df = df.groupby([df["hour"], df["crime_type"]]).size().reset_index(name="count")
-                heat_pivot = heat_df.pivot_table(index="hour", columns="crime_type", values="count", fill_value=0)
-                st.dataframe(heat_pivot)
-            except Exception:
-                st.info("Not enough data for heatmap.")
+                compare_df = forecast.merge(ts, on="ds", how="left")
 
-        elif role == "law_enforcement":
-            st.success("Law Enforcement View")
-            st.subheader("Filtered Raw Data")
-            st.dataframe(df, use_container_width=True)
-
-            st.subheader("Crime Incidents Map")
-            try:
-                map_df = df.dropna(subset=["latitude", "longitude"])
-                if not map_df.empty:
-                    fig_map = px.scatter_mapbox(
-                        map_df, lat="latitude", lon="longitude", color="crime_type",
-                        hover_name="crime_type", zoom=10, mapbox_style="carto-positron",
-                        title="Crime Incidents by Type", height=500
+                fig_fore = px.line(
+                    forecast, x="ds", y="yhat",
+                    labels={"ds": "Date", "yhat": "Predicted"},
+                    title="Crime Forecast (Prophet)"
+                )
+                
+                # Add confidence interval shading
+                fig_fore.add_traces([
+                    dict(
+                        x=list(forecast["ds"]) + list(forecast["ds"][::-1]),
+                        y=list(forecast["yhat_upper"]) + list(forecast["yhat_lower"][::-1]),
+                        fill="toself",
+                        fillcolor="rgba(0,123,255,0.15)",
+                        line=dict(color="rgba(255,255,255,0)"),
+                        hoverinfo="skip",
+                        name="Confidence Interval"
                     )
-                    st.plotly_chart(fig_map, use_container_width=True)
-                    p = save_plotly_as_image(fig_map)
-                    if p:
-                        chart_paths.append(p)
-                else:
-                    st.info("No geolocation data to plot.")
-            except Exception as e:
-                st.error(f"Map error: {e}")
+                ])
 
-            st.subheader("📈 Crime Forecast (Next 30 days)")
-            try:
-                from prophet import Prophet
-                ts = df.groupby(df["date"].dt.floor("d")).size().reset_index(name="y")
-                ts.rename(columns={"date": "ds"}, inplace=True)
-                ts = ts.sort_values("ds")
-                if len(ts) < 2:
-                    st.warning("Not enough daily history to forecast (need at least 2 days).")
-                else:
-                    model = Prophet()
-                    model.fit(ts)
-                    future = model.make_future_dataframe(periods=30)
-                    forecast = model.predict(future)
-
-                    compare_df = forecast.merge(ts, on="ds", how="left")
-
-                    fig_fore = px.line(
-                        forecast, x="ds", y="yhat",
-                        labels={"ds": "Date", "yhat": "Predicted"},
-                        title="Crime Forecast (Prophet)"
-                    )
-
-                    fig_fore.add_traces([
-                        dict(
-                            x=list(forecast["ds"]) + list(forecast["ds"][::-1]),
-                            y=list(forecast["yhat_upper"]) + list(forecast["yhat_lower"][::-1]),
-                            fill="toself",
-                            fillcolor="rgba(0,123,255,0.15)",
-                            line=dict(color="rgba(255,255,255,0)"),
-                            hoverinfo="skip",
-                            name="Confidence Interval"
-                        )
-                    ])
-
-                    fig_fore.add_scatter(
-                        x=compare_df["ds"], y=compare_df["y"],
-                        mode="markers+lines", name="Actual"
-                    )
-
-                    fig_fore.add_scatter(
-                        x=forecast["ds"], y=forecast["yhat"],
-                        mode="lines", name="Predicted", line=dict(color="blue")
-                    )
-
-                    st.plotly_chart(fig_fore, use_container_width=True)
-
-                    p = save_plotly_as_image(fig_fore)
-                    if p:
-                        chart_paths.append(p)
-            except Exception as e:
-                st.error(f"Forecasting failed: {e}")
-
-            st.subheader("🔥 Crime Hotspot Detection ")
-            try:
-                from sklearn.cluster import KMeans
-                loc_df = df[["latitude", "longitude"]].dropna()
-                if len(loc_df) < 3:
-                    st.warning("Need at least 3 points for hotspot detection.")
-                else:
-                    max_k = min(12, max(2, len(loc_df)//2))
-                    default_k = min(3, max_k)
-                    k = st.slider("Clusters (k)", 2, max_k, default_k)
-                    kmeans = KMeans(n_clusters=k, random_state=42)
-                    loc_df = loc_df.copy()
-                    loc_df["cluster"] = kmeans.fit_predict(loc_df)
-                    fig_hot = px.scatter_mapbox(
-                        loc_df, lat="latitude", lon="longitude", color="cluster",
-                        title="Hotspots (KMeans)", mapbox_style="carto-positron", zoom=10, height=500
-                    )
-                    st.plotly_chart(fig_hot, use_container_width=True)
-                    p = save_plotly_as_image(fig_hot)
-                    if p:
-                        chart_paths.append(p)
-            except Exception as e:
-                st.error(f"Hotspot detection error: {e}")
-
-            st.subheader("📄 Export Report (PDF)")
-            include_charts = st.checkbox("Include charts in PDF", value=True)
-            if st.button("Generate PDF Report"):
-                pdf_bytes = generate_pdf_report(df, username, chart_paths if include_charts else [], alerts)
-                cleanup_temp_images()
-                st.download_button(
-                    "Download Report (PDF)", data=pdf_bytes,
-                    file_name=f"crime_report_{username}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                    mime="application/pdf"
+                # Add actual data points
+                fig_fore.add_scatter(
+                    x=compare_df["ds"], y=compare_df["y"],
+                    mode="markers+lines", name="Actual", line=dict(color="red")
+                )
+                
+                # Add predicted line (can be redundant but ensures blue line is visible)
+                fig_fore.add_scatter(
+                    x=forecast["ds"], y=forecast["yhat"],
+                    mode="lines", name="Predicted", line=dict(color="blue")
                 )
 
-        st.markdown("## Summary Metrics")
-        cols = st.columns(3)
+                st.plotly_chart(fig_fore, use_container_width=True)
+
+                p = save_plotly_as_image(fig_fore)
+                if p:
+                    chart_paths.append(p)
+        except ImportError:
+            st.warning("Prophet library not installed. Cannot show forecast. Install with: `pip install prophet`")
+        except Exception as e:
+            st.error(f"Forecasting failed: {e}")
+
+        st.markdown("---")
+        st.subheader("🔥 Crime Hotspot Detection ")
         try:
-            total = len(df)
-            unique_ct = int(df["crime_type"].nunique())
-            ds_min = df["date"].min().date()
-            ds_max = df["date"].max().date()
-            cols[0].metric("Total Incidents", total)
-            cols[1].metric("Crime Types", unique_ct)
-            cols[2].metric("Date Range", f"{ds_min} - {ds_max}")
-        except Exception:
-            cols[0].metric("Total Incidents", "—")
-            cols[1].metric("Crime Types", "—")
-            cols[2].metric("Date Range", "—")
+            # Requires scikit-learn library to be installed: pip install scikit-learn
+            from sklearn.cluster import KMeans 
+            loc_df = df[["latitude", "longitude"]].dropna()
+            if len(loc_df) < 3:
+                st.warning("Need at least 3 points for hotspot detection.")
+            else:
+                max_k = min(12, max(2, len(loc_df)//2))
+                default_k = min(3, max_k)
+                k = st.slider("Clusters (k)", 2, max_k, default_k)
+                
+                # Kmeans is now instantiated outside the loop
+                kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
+                loc_df = loc_df.copy()
+                loc_df["cluster"] = kmeans.fit_predict(loc_df)
+                
+                fig_hot = px.scatter_mapbox(
+                    loc_df, lat="latitude", lon="longitude", color="cluster",
+                    color_continuous_scale=px.colors.sequential.Inferno, 
+                    title="Hotspots (KMeans)", mapbox_style="carto-positron", zoom=10, height=500
+                )
+                st.plotly_chart(fig_hot, use_container_width=True)
+                p = save_plotly_as_image(fig_hot)
+                if p:
+                    chart_paths.append(p)
+        except ImportError:
+            st.warning("scikit-learn library not installed. Cannot show hotspot detection. Install with: `pip install scikit-learn`")
+        except Exception as e:
+            st.error(f"Hotspot detection error: {e}")
+
+        st.markdown("---")
+        st.subheader("📄 Export Report (PDF)")
+        include_charts = st.checkbox("Include charts in PDF", value=True)
+        if st.button("Generate PDF Report"):
+            pdf_bytes = generate_pdf_report(df, username, chart_paths if include_charts else [], alerts)
+            cleanup_temp_images()
+            st.download_button(
+                "Download Report (PDF)", data=pdf_bytes,
+                file_name=f"crime_report_{username}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf"
+            )
+
+    st.markdown("---")
+    st.markdown("## Summary Metrics")
+    cols = st.columns(3)
+    try:
+        total = len(df)
+        unique_ct = int(df["crime_type"].nunique())
+        ds_min = df["date"].min().date()
+        ds_max = df["date"].max().date()
+        cols[0].metric("Total Incidents", total)
+        cols[1].metric("Crime Types", unique_ct)
+        cols[2].metric("Date Range", f"{ds_min} - {ds_max}")
+    except Exception:
+        cols[0].metric("Total Incidents", "—")
+        cols[1].metric("Crime Types", "—")
+        cols[2].metric("Date Range", "—")
 
 
 # ---------------- Entrypoint ----------------
