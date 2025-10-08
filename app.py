@@ -13,18 +13,18 @@ from datetime import datetime
 from fpdf import FPDF
 from sklearn.metrics import confusion_matrix
 import plotly.figure_factory as ff
-from sklearn.cluster import KMeans # Added explicit import for Law Enforcement view
-from prophet import Prophet # Added explicit import for Law Enforcement view
+from sklearn.cluster import KMeans 
+from prophet import Prophet 
 
-# Assumed from original code comments, but not provided. 
-# Placeholder functions for a complete run-through (assuming a simple dictionary-based auth).
-USERS_FILE = "users.json" # Define USERS_FILE globally for placeholder funcs
+# Define USERS_FILE globally
+USERS_FILE = "users.json" 
+
+# ---------------- Placeholder Utility Functions ----------------
 def load_users():
     """Loads users from the USERS_FILE."""
     if not os.path.exists(USERS_FILE):
         return {"users": []}
     with open(USERS_FILE, "r") as f:
-        # Added check for empty file
         try:
             return json.load(f)
         except json.JSONDecodeError:
@@ -59,11 +59,11 @@ def create_user(username, password, role):
         return True
     except Exception:
         return False
-# End of placeholder utils
+# ---------------- End of Placeholder Utils ----------------
 
 st.set_page_config(page_title="Crime Pattern Dashboard", layout="wide", initial_sidebar_state="expanded")
 
-# ---------------- Session state ----------------
+# ---------------- Session state initialization ----------------
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "username" not in st.session_state:
@@ -73,7 +73,7 @@ if "role" not in st.session_state:
 if "show_forgot_pw" not in st.session_state:
     st.session_state.show_forgot_pw = False
 
-# ---------------- Ensure users.json ----------------
+# ---------------- Ensure users.json exists ----------------
 if not os.path.exists(USERS_FILE):
     with open(USERS_FILE, "w") as f:
         json.dump({
@@ -91,31 +91,21 @@ def sanitize_for_pdf(text: str) -> str:
         return ""
     try:
         replacements = {
-            "🚨": "[ALERT]",
-            "📊": "[SPIKE]",
-            "⚠️": "[WARN]",
-            "⚠": "[WARN]",
-            "📄": "[REPORT]",
-            "🔥": "[HOTSPOT]",
-            "✅": "[OK]",
-            "→": "->",
-            "–": "-",
-            "—": "-",
+            "🚨": "[ALERT]", "📊": "[SPIKE]", "⚠️": "[WARN]", "⚠": "[WARN]",
+            "📄": "[REPORT]", "🔥": "[HOTSPOT]", "✅": "[OK]", "→": "->",
+            "–": "-", "—": "-",
         }
         for k, v in replacements.items():
             text = text.replace(k, v)
-        # Attempt Latin-1 encoding for broader character support, replacing errors
         safe = text.encode('latin-1', errors='replace').decode('latin-1')
         return safe
     except Exception:
-        # Fallback to pure ASCII replacement
         return str(text).encode('ascii', errors='replace').decode('ascii')
 
 
 def save_plotly_as_image(fig):
     tmp = None
     try:
-        # Ensure 'kaleido' is installed for image export: pip install kaleido
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         tmp.close()
         fig.write_image(tmp.name, format="png")
@@ -157,7 +147,6 @@ def get_alerts(df, role):
 
     try:
         if "date" in df.columns:
-            # Ensure 'date' column is datetime type before subtraction
             df_dates = df.copy()
             df_dates["date"] = pd.to_datetime(df_dates["date"], errors="coerce")
             last_7d = df_dates[df_dates["date"] >= pd.Timestamp.now() - pd.Timedelta(days=7)]
@@ -174,9 +163,7 @@ def get_alerts(df, role):
 
 def generate_pdf_report(df, username, chart_paths, alerts):
     pdf = FPDF()
-    # Define an alias for the standard font to ensure it can handle basic Latin-1 (used in sanitize)
-    pdf.set_font("Arial", size=10) # Set a default font
-    
+    pdf.set_font("Arial", size=10)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
@@ -217,7 +204,6 @@ def generate_pdf_report(df, username, chart_paths, alerts):
     for path in chart_paths:
         if path and os.path.exists(path):
             try:
-                # Calculate image width to fit page, respecting margins (180mm is a safe width for A4)
                 pdf.image(path, w=180)
                 pdf.ln(5)
             except Exception:
@@ -245,7 +231,7 @@ def show_forgot_password():
     try:
         users = load_users() 
     except Exception as e:
-        st.error(f"Error loading users: {e}. Ensure load_users() is correctly implemented.")
+        st.error(f"Error loading users: {e}.")
         return
 
     user_list = users.get("users", [])
@@ -262,7 +248,6 @@ def show_forgot_password():
         elif new_pw != confirm_pw:
             st.error("Passwords do not match.")
         else:
-            # Update password in the list
             for u in user_list:
                 if u["username"] == uname:
                     u["password"] = new_pw
@@ -274,7 +259,7 @@ def show_forgot_password():
                 st.session_state.show_forgot_pw = False
                 st.experimental_rerun()
             except Exception as e:
-                st.error(f"Error saving new password: {e}. Ensure save_users() is correctly implemented.")
+                st.error(f"Error saving new password: {e}.")
 
 
 def show_login():
@@ -361,36 +346,38 @@ def show_dashboard():
     st.markdown("Upload a CSV or Excel file containing columns: `date`, `crime_type`, `latitude`, `longitude` (optional: region/city/district).")
 
     uploaded_file = st.file_uploader("Upload Crime Data File (CSV or Excel)", type=["csv", "xlsx", "xls"])
+    
+    # ---------------- Confusion Matrix (Placed correctly here) ----------------
+    st.markdown("---")
+    st.markdown("## Confusion Matrix")
+    y_true_input = st.text_area("Actual (comma-separated)", value="A, B, A, C", key="cm_true_2", help="e.g., A, B, A, C")
+    y_pred_input = st.text_area("Predicted (comma-separated)", value="A, A, C, C", key="cm_pred_2", help="e.g., A, A, C, C")
+    
+    if y_true_input and y_pred_input:
+        y_true = [x.strip() for x in y_true_input.split(",") if x.strip()]
+        y_pred = [x.strip() for x in y_pred_input.split(",") if x.strip()]
+        labels = sorted(set(y_true + y_pred))
+        if len(y_true) == len(y_pred) and y_true and y_pred:
+            try:
+                cm = confusion_matrix(y_true, y_pred, labels=labels)
+                fig_cm = ff.create_annotated_heatmap(
+                    cm, x=labels, y=labels, colorscale='Blues', showscale=True,
+                    annotation_text=[[str(cell) for cell in row] for row in cm]
+                )
+                fig_cm.update_layout(xaxis_title="Predicted", yaxis_title="Actual", title="Confusion Matrix")
+                st.plotly_chart(fig_cm, use_container_width=True)
+            except ValueError as ve:
+                 st.warning(f"Could not compute Confusion Matrix. Error: {ve}")
+        else:
+            st.warning("Input lists must be the same length and not empty.")
+    else:
+         st.info("Enter actual and predicted labels to see the Confusion Matrix.")
+    st.markdown("---")
+    # ---------------- End Confusion Matrix ----------------
+
     if uploaded_file is None:
         st.info("Please upload a CSV or Excel file with columns: date, crime_type, latitude, longitude.")
-        
-        # **CONFUSION MATRIX LOGIC MOVED INSIDE DASHBOARD FUNCTION**
-        st.markdown("---")
-        st.markdown("## Confusion Matrix")
-        y_true_input = st.text_area("Actual (comma-separated)", value="A, B, A, C", key="cm_true", help="e.g., A, B, A, C")
-        y_pred_input = st.text_area("Predicted (comma-separated)", value="A, A, C, C", key="cm_pred", help="e.g., A, A, C, C")
-        
-        if y_true_input and y_pred_input:
-            y_true = [x.strip() for x in y_true_input.split(",") if x.strip()]
-            y_pred = [x.strip() for x in y_pred_input.split(",") if x.strip()]
-            labels = sorted(set(y_true + y_pred))
-            if len(y_true) == len(y_pred) and y_true and y_pred:
-                try:
-                    cm = confusion_matrix(y_true, y_pred, labels=labels)
-                    fig_cm = ff.create_annotated_heatmap(
-                        cm, x=labels, y=labels, colorscale='Blues', showscale=True,
-                        annotation_text=[[str(cell) for cell in row] for row in cm]
-                    )
-                    fig_cm.update_layout(xaxis_title="Predicted", yaxis_title="Actual", title="Confusion Matrix")
-                    st.plotly_chart(fig_cm, use_container_width=True)
-                except ValueError as ve:
-                    st.warning(f"Could not compute Confusion Matrix. Error: {ve}")
-            else:
-                st.warning("Input lists must be the same length and not empty.")
-        else:
-             st.info("Enter actual and predicted labels to see the Confusion Matrix.")
-        st.markdown("---")
-        return # Exit dashboard if no file uploaded
+        return 
 
     try:
         fname = uploaded_file.name.lower()
@@ -402,6 +389,7 @@ def show_dashboard():
         st.error(f"Failed to read file: {e}")
         return
 
+    # Clean column names
     raw_df.columns = raw_df.columns.str.lower().str.strip().str.replace('[^a-z0-9_]+', '', regex=True)
     required = {"date", "crime_type", "latitude", "longitude"}
     if not required.issubset(set(raw_df.columns)):
@@ -452,39 +440,9 @@ def show_dashboard():
     st.markdown("**Data Cleaning Summary**")
     st.write(diff_stats)
 
-    # **CONFUSION MATRIX LOGIC MOVED INSIDE DASHBOARD FUNCTION**
-    st.markdown("---")
-    st.markdown("## Confusion Matrix")
-    y_true_input = st.text_area("Actual (comma-separated)", value="A, B, A, C", key="cm_true_2", help="e.g., A, B, A, C")
-    y_pred_input = st.text_area("Predicted (comma-separated)", value="A, A, C, C", key="cm_pred_2", help="e.g., A, A, C, C")
     
-    if y_true_input and y_pred_input:
-        y_true = [x.strip() for x in y_true_input.split(",") if x.strip()]
-        y_pred = [x.strip() for x in y_pred_input.split(",") if x.strip()]
-        labels = sorted(set(y_true + y_pred))
-        if len(y_true) == len(y_pred) and y_true and y_pred:
-            try:
-                cm = confusion_matrix(y_true, y_pred, labels=labels)
-                fig_cm = ff.create_annotated_heatmap(
-                    cm, x=labels, y=labels, colorscale='Blues', showscale=True,
-                    annotation_text=[[str(cell) for cell in row] for row in cm]
-                )
-                fig_cm.update_layout(xaxis_title="Predicted", yaxis_title="Actual", title="Confusion Matrix")
-                st.plotly_chart(fig_cm, use_container_width=True)
-            except ValueError as ve:
-                 st.warning(f"Could not compute Confusion Matrix. Error: {ve}")
-        else:
-            st.warning("Input lists must be the same length and not empty.")
-    else:
-         st.info("Enter actual and predicted labels to see the Confusion Matrix.")
-    st.markdown("---")
-    # **END OF CONFUSION MATRIX LOGIC**
-
-
     st.markdown("## Correlation Heatmap")
-    # Need to check df is not empty before correlation calculation
     if not df.empty:
-        # Exclude 'date' column for correlation if it was not already converted to numeric
         num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         if len(num_cols) >= 2:
             corr = df[num_cols].corr()
@@ -528,7 +486,6 @@ def show_dashboard():
 
     if "date" in df.columns and not df.empty:
         try:
-            # Drop NaT values before finding min/max
             date_col = df["date"].dropna()
             if not date_col.empty:
                 min_date = date_col.min().date()
@@ -536,13 +493,12 @@ def show_dashboard():
                 date_range = st.sidebar.date_input("Date Range", [min_date, max_date])
                 if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
                     start, end = date_range
-                    # Ensure the date comparison is done correctly
                     df = df[(df["date"].dt.date >= start) & (df["date"].dt.date <= end)]
         except Exception:
             st.sidebar.warning("Could not filter by date range.")
 
     if "date" in df.columns and not df.empty:
-        df = df.copy() # Avoid SettingWithCopyWarning
+        df = df.copy() 
         df["hour"] = df["date"].dt.hour
         hour_range = st.sidebar.slider("Hour Range (0–23)", 0, 23, (0, 23), step=1)
         df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
@@ -559,9 +515,8 @@ def show_dashboard():
     else:
         st.sidebar.markdown("**Region (derived from Lat/Lon grid)**")
         grid_size = st.sidebar.slider("Grid size (degrees)", 0.01, 0.5, 0.05, 0.01)
-        # Only perform grid binning if lat/lon are present and non-empty after filtering
         if not df.empty and "latitude" in df.columns and "longitude" in df.columns:
-            df = df.copy() # Avoid SettingWithCopyWarning
+            df = df.copy() 
             df["latitude"] = pd.to_numeric(df["latitude"], errors='coerce')
             df["longitude"] = pd.to_numeric(df["longitude"], errors='coerce')
             lat_bin = np.round(df["latitude"] / grid_size) * grid_size
@@ -588,7 +543,7 @@ def show_dashboard():
 
     chart_paths = []
     
-    st.markdown("---") # Separator before role-based content
+    st.markdown("---") 
     
     if role == "public":
         st.info("Public View: Aggregated summary")
@@ -605,7 +560,6 @@ def show_dashboard():
         st.success("Analyst View")
         period = st.radio("Granularity", ["Daily", "Weekly", "Monthly"], index=0, horizontal=True)
         
-        # Ensure only non-null dates are used for grouping
         df_dt = df.dropna(subset=["date"]).copy()
         
         if period == "Daily":
@@ -637,9 +591,7 @@ def show_dashboard():
             
             heat_df_agg = heat_df.groupby(["hour", "crime_type"]).size().reset_index(name="count")
             heat_pivot = heat_df_agg.pivot_table(index="hour", columns="crime_type", values="count", fill_value=0)
-            st.dataframe(heat_pivot)
             
-            # Optional: Display as a Plotly heatmap
             if not heat_pivot.empty:
                 fig_heat = px.imshow(
                     heat_pivot,
@@ -653,6 +605,8 @@ def show_dashboard():
                 p_heat = save_plotly_as_image(fig_heat)
                 if p_heat:
                     chart_paths.append(p_heat)
+            else:
+                 st.info("Not enough data for heatmap.")
             
         except Exception:
             st.info("Not enough data for heatmap.")
@@ -684,7 +638,6 @@ def show_dashboard():
         st.markdown("---")
         st.subheader("📈 Crime Forecast (Next 30 days)")
         try:
-            # Requires prophet library to be installed: pip install prophet
             ts = df.groupby(df["date"].dt.floor("d")).size().reset_index(name="y")
             ts.rename(columns={"date": "ds"}, inplace=True)
             ts = ts.sort_values("ds")
@@ -704,7 +657,6 @@ def show_dashboard():
                     title="Crime Forecast (Prophet)"
                 )
                 
-                # Add confidence interval shading
                 fig_fore.add_traces([
                     dict(
                         x=list(forecast["ds"]) + list(forecast["ds"][::-1]),
@@ -717,19 +669,16 @@ def show_dashboard():
                     )
                 ])
 
-                # Add actual data points
                 fig_fore.add_scatter(
                     x=compare_df["ds"], y=compare_df["y"],
                     mode="markers+lines", name="Actual", line=dict(color="red")
                 )
                 
-                # Add predicted line (can be redundant but ensures blue line is visible)
                 fig_fore.add_scatter(
                     x=forecast["ds"], y=forecast["yhat"],
                     mode="lines", name="Predicted", line=dict(color="blue")
                 )
                 
-                # Update layout for better visibility
                 fig_fore.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
 
                 st.plotly_chart(fig_fore, use_container_width=True)
@@ -745,7 +694,6 @@ def show_dashboard():
         st.markdown("---")
         st.subheader("🔥 Crime Hotspot Detection ")
         try:
-            # Requires scikit-learn library to be installed: pip install scikit-learn
             loc_df = df[["latitude", "longitude"]].dropna().copy()
             if len(loc_df) < 3:
                 st.warning("Need at least 3 points for hotspot detection.")
@@ -756,11 +704,10 @@ def show_dashboard():
                 
                 kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
                 loc_df["cluster"] = kmeans.fit_predict(loc_df)
-                loc_df["cluster"] = loc_df["cluster"].astype(str) # Convert to string for discrete colors
+                loc_df["cluster"] = loc_df["cluster"].astype(str)
                 
                 fig_hot = px.scatter_mapbox(
                     loc_df, lat="latitude", lon="longitude", color="cluster",
-                    # Changed to a discrete color sequence since cluster is categorical
                     color_discrete_sequence=px.colors.qualitative.Bold, 
                     title="Hotspots (KMeans)", mapbox_style="carto-positron", zoom=10, height=500
                 )
