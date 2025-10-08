@@ -8,10 +8,48 @@ import io
 import os
 import tempfile
 import glob
+import plotly.express as px
 from datetime import datetime
 from fpdf import FPDF
+from sklearn.cluster import KMeans # Added explicit import for Law Enforcement view
+from prophet import Prophet # Added explicit import for Law Enforcement view
 
-from utils import authenticate_user, create_user, load_users, save_users  # Assumed from original code comments
+# Assumed from original code comments, but not provided. 
+# Placeholder functions for a complete run-through (assuming a simple dictionary-based auth).
+def load_users():
+    """Loads users from the USERS_FILE."""
+    if not os.path.exists(USERS_FILE):
+        return {"users": []}
+    with open(USERS_FILE, "r") as f:
+        return json.load(f)
+
+def save_users(users_data):
+    """Saves user data to the USERS_FILE."""
+    with open(USERS_FILE, "w") as f:
+        json.dump(users_data, f, indent=2)
+
+def authenticate_user(username, password):
+    """Authenticates a user and returns their role, or None."""
+    try:
+        users_data = load_users()
+        user = next((u for u in users_data["users"] if u["username"] == username and u["password"] == password), None)
+        return user["role"] if user else None
+    except Exception:
+        return None
+
+def create_user(username, password, role):
+    """Creates a new user. Returns True on success, False if user exists."""
+    try:
+        users_data = load_users()
+        if any(u["username"] == username for u in users_data["users"]):
+            return False # User already exists
+        
+        users_data["users"].append({"username": username, "password": password, "role": role})
+        save_users(users_data)
+        return True
+    except Exception:
+        return False
+# End of placeholder utils
 
 st.set_page_config(page_title="Crime Pattern Dashboard", layout="wide", initial_sidebar_state="expanded")
 
@@ -68,12 +106,13 @@ def sanitize_for_pdf(text: str) -> str:
 def save_plotly_as_image(fig):
     tmp = None
     try:
+        # Ensure 'kaleido' is installed for image export: pip install kaleido
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         tmp.close()
         fig.write_image(tmp.name, format="png")
         return tmp.name
     except Exception as e:
-        st.warning(f"Could not save chart image: {e}")
+        st.warning(f"Could not save chart image. Ensure 'kaleido' is installed (`pip install kaleido`): {e}")
         try:
             if tmp and os.path.exists(tmp.name):
                 os.remove(tmp.name)
@@ -362,6 +401,28 @@ def show_dashboard():
     st.markdown("**Data Cleaning Summary**")
     st.write(diff_stats)
 
+    # --- Start of logic moved inside the function ---
+    st.markdown("## Correlation Heatmap")
+    # Need to check df is not empty before correlation calculation
+    if not df.empty:
+        num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        if len(num_cols) >= 2:
+            corr = df[num_cols].corr()
+            fig_corr = px.imshow(
+                corr,
+                text_auto=True,
+                color_continuous_scale="RdBu",
+                zmin=-1, zmax=1,
+                aspect="auto",
+                title="Correlation Matrix"
+            )
+            st.plotly_chart(fig_corr, use_container_width=True)
+        else:
+            st.info("No numeric columns for correlation heatmap.")
+    else:
+        st.info("Data is empty after initial cleaning; cannot compute correlation.")
+    # --- End of logic moved inside the function ---
+
     # Sidebar filters
     st.sidebar.header("Filters")
     
@@ -512,7 +573,6 @@ def show_dashboard():
         st.subheader("📈 Crime Forecast (Next 30 days)")
         try:
             # Requires prophet library to be installed: pip install prophet
-            from prophet import Prophet 
             ts = df.groupby(df["date"].dt.floor("d")).size().reset_index(name="y")
             ts.rename(columns={"date": "ds"}, inplace=True)
             ts = ts.sort_values("ds")
@@ -571,7 +631,6 @@ def show_dashboard():
         st.subheader("🔥 Crime Hotspot Detection ")
         try:
             # Requires scikit-learn library to be installed: pip install scikit-learn
-            from sklearn.cluster import KMeans 
             loc_df = df[["latitude", "longitude"]].dropna()
             if len(loc_df) < 3:
                 st.warning("Need at least 3 points for hotspot detection.")
