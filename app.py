@@ -11,17 +11,24 @@ import glob
 import plotly.express as px
 from datetime import datetime
 from fpdf import FPDF
+from sklearn.metrics import confusion_matrix
+import plotly.figure_factory as ff
 from sklearn.cluster import KMeans # Added explicit import for Law Enforcement view
 from prophet import Prophet # Added explicit import for Law Enforcement view
 
 # Assumed from original code comments, but not provided. 
 # Placeholder functions for a complete run-through (assuming a simple dictionary-based auth).
+USERS_FILE = "users.json" # Define USERS_FILE globally for placeholder funcs
 def load_users():
     """Loads users from the USERS_FILE."""
     if not os.path.exists(USERS_FILE):
         return {"users": []}
     with open(USERS_FILE, "r") as f:
-        return json.load(f)
+        # Added check for empty file
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return {"users": []}
 
 def save_users(users_data):
     """Saves user data to the USERS_FILE."""
@@ -32,7 +39,7 @@ def authenticate_user(username, password):
     """Authenticates a user and returns their role, or None."""
     try:
         users_data = load_users()
-        user = next((u for u in users_data["users"] if u["username"] == username and u["password"] == password), None)
+        user = next((u for u in users_data.get("users", []) if u["username"] == username and u["password"] == password), None)
         return user["role"] if user else None
     except Exception:
         return None
@@ -41,9 +48,12 @@ def create_user(username, password, role):
     """Creates a new user. Returns True on success, False if user exists."""
     try:
         users_data = load_users()
-        if any(u["username"] == username for u in users_data["users"]):
+        if any(u["username"] == username for u in users_data.get("users", [])):
             return False # User already exists
         
+        if "users" not in users_data:
+             users_data["users"] = []
+             
         users_data["users"].append({"username": username, "password": password, "role": role})
         save_users(users_data)
         return True
@@ -64,7 +74,6 @@ if "show_forgot_pw" not in st.session_state:
     st.session_state.show_forgot_pw = False
 
 # ---------------- Ensure users.json ----------------
-USERS_FILE = "users.json"
 if not os.path.exists(USERS_FILE):
     with open(USERS_FILE, "w") as f:
         json.dump({
@@ -142,7 +151,7 @@ def get_alerts(df, role):
             top_count = int(vc.max())
             top_type = vc.idxmax()
             if top_count > 50:
-                alerts.append(f"🚨 High number of {top_type} incidents detected: {top_count} cases.")
+                alerts.append(f"🚨 High number of **{top_type}** incidents detected: **{top_count}** cases.")
     except Exception:
         pass
 
@@ -154,7 +163,7 @@ def get_alerts(df, role):
             last_7d = df_dates[df_dates["date"] >= pd.Timestamp.now() - pd.Timedelta(days=7)]
             if len(last_7d) > 0 and (len(last_7d) / max(1, len(df_dates.dropna(subset=['date'])))) > 0.25:
                 pct = int((len(last_7d) / max(1, len(df_dates))) * 100)
-                alerts.append(f"📊 {len(last_7d)} incidents reported in the last 7 days ({pct}% of records).")
+                alerts.append(f"📊 **{len(last_7d)}** incidents reported in the last 7 days (**{pct}%** of records).")
     except Exception:
         pass
 
@@ -165,6 +174,9 @@ def get_alerts(df, role):
 
 def generate_pdf_report(df, username, chart_paths, alerts):
     pdf = FPDF()
+    # Define an alias for the standard font to ensure it can handle basic Latin-1 (used in sanitize)
+    pdf.set_font("Arial", size=10) # Set a default font
+    
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
@@ -205,6 +217,7 @@ def generate_pdf_report(df, username, chart_paths, alerts):
     for path in chart_paths:
         if path and os.path.exists(path):
             try:
+                # Calculate image width to fit page, respecting margins (180mm is a safe width for A4)
                 pdf.image(path, w=180)
                 pdf.ln(5)
             except Exception:
@@ -229,14 +242,14 @@ def show_forgot_password():
     if not uname:
         return
     
-    # load_users and save_users must be in utils.py
     try:
         users = load_users() 
     except Exception as e:
-        st.error(f"Error loading users: {e}. Ensure load_users() is correctly implemented in utils.py.")
+        st.error(f"Error loading users: {e}. Ensure load_users() is correctly implemented.")
         return
 
-    user = next((u for u in users["users"] if u["username"] == uname), None)
+    user_list = users.get("users", [])
+    user = next((u for u in user_list if u["username"] == uname), None)
     if not user:
         st.error("Username not found.")
         return
@@ -249,17 +262,27 @@ def show_forgot_password():
         elif new_pw != confirm_pw:
             st.error("Passwords do not match.")
         else:
-            user["password"] = new_pw
+            # Update password in the list
+            for u in user_list:
+                if u["username"] == uname:
+                    u["password"] = new_pw
+                    break
+            
             try:
-                save_users(users)  # Assumes save_users accepts the entire user structure
+                save_users(users) 
                 st.success("Password reset! You may now sign in with your new password.")
                 st.session_state.show_forgot_pw = False
+                st.experimental_rerun()
             except Exception as e:
-                st.error(f"Error saving new password: {e}. Ensure save_users() is correctly implemented in utils.py.")
+                st.error(f"Error saving new password: {e}. Ensure save_users() is correctly implemented.")
 
 
 def show_login():
     if st.session_state.get("show_forgot_pw", False):
+        if st.button("← Back to Login"):
+            st.session_state.show_forgot_pw = False
+            st.experimental_rerun()
+            return
         show_forgot_password()
         return
 
@@ -278,8 +301,11 @@ def show_login():
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
         role_select = st.selectbox("Role", ["public", "analyst", "law_enforcement"])
-        if st.button("Login"):
-            # authenticate_user must be in utils.py
+        
+        login_button = st.button("Login")
+        forgot_pw_button = st.button("Forgot Password?")
+        
+        if login_button:
             role = authenticate_user(username, password)
             if role and role == role_select:
                 st.session_state.logged_in = True
@@ -293,8 +319,7 @@ def show_login():
             else:
                 st.error("Invalid credentials or role mismatch.")
         
-        # Forgot password button inside col2 for alignment
-        if st.button("Forgot Password?"):
+        if forgot_pw_button:
             st.session_state.show_forgot_pw = True
             st.experimental_rerun() # Rerun to show the forgot password form
 
@@ -309,7 +334,6 @@ def show_login():
         if not new_username or not new_password:
             st.warning("Provide both username and password.")
         else:
-            # create_user must be in utils.py
             success = create_user(new_username, new_password, new_role)
             if success:
                 st.success("Account created. Please log in.")
@@ -321,7 +345,7 @@ def show_login():
 def show_dashboard():
     role = st.session_state.role
     username = st.session_state.username
-
+    
     st.sidebar.markdown(f"**Logged in as:** {username} ({role})")
     if st.sidebar.button("Logout"):
         st.session_state.logged_in = False
@@ -339,7 +363,34 @@ def show_dashboard():
     uploaded_file = st.file_uploader("Upload Crime Data File (CSV or Excel)", type=["csv", "xlsx", "xls"])
     if uploaded_file is None:
         st.info("Please upload a CSV or Excel file with columns: date, crime_type, latitude, longitude.")
-        return
+        
+        # **CONFUSION MATRIX LOGIC MOVED INSIDE DASHBOARD FUNCTION**
+        st.markdown("---")
+        st.markdown("## Confusion Matrix")
+        y_true_input = st.text_area("Actual (comma-separated)", value="A, B, A, C", key="cm_true", help="e.g., A, B, A, C")
+        y_pred_input = st.text_area("Predicted (comma-separated)", value="A, A, C, C", key="cm_pred", help="e.g., A, A, C, C")
+        
+        if y_true_input and y_pred_input:
+            y_true = [x.strip() for x in y_true_input.split(",") if x.strip()]
+            y_pred = [x.strip() for x in y_pred_input.split(",") if x.strip()]
+            labels = sorted(set(y_true + y_pred))
+            if len(y_true) == len(y_pred) and y_true and y_pred:
+                try:
+                    cm = confusion_matrix(y_true, y_pred, labels=labels)
+                    fig_cm = ff.create_annotated_heatmap(
+                        cm, x=labels, y=labels, colorscale='Blues', showscale=True,
+                        annotation_text=[[str(cell) for cell in row] for row in cm]
+                    )
+                    fig_cm.update_layout(xaxis_title="Predicted", yaxis_title="Actual", title="Confusion Matrix")
+                    st.plotly_chart(fig_cm, use_container_width=True)
+                except ValueError as ve:
+                    st.warning(f"Could not compute Confusion Matrix. Error: {ve}")
+            else:
+                st.warning("Input lists must be the same length and not empty.")
+        else:
+             st.info("Enter actual and predicted labels to see the Confusion Matrix.")
+        st.markdown("---")
+        return # Exit dashboard if no file uploaded
 
     try:
         fname = uploaded_file.name.lower()
@@ -351,7 +402,7 @@ def show_dashboard():
         st.error(f"Failed to read file: {e}")
         return
 
-    raw_df.columns = raw_df.columns.str.lower().str.strip()
+    raw_df.columns = raw_df.columns.str.lower().str.strip().str.replace('[^a-z0-9_]+', '', regex=True)
     required = {"date", "crime_type", "latitude", "longitude"}
     if not required.issubset(set(raw_df.columns)):
         st.error(f"File must contain columns: {', '.join(required)}. Found: {list(raw_df.columns)}")
@@ -401,10 +452,39 @@ def show_dashboard():
     st.markdown("**Data Cleaning Summary**")
     st.write(diff_stats)
 
-    # --- Start of logic moved inside the function ---
+    # **CONFUSION MATRIX LOGIC MOVED INSIDE DASHBOARD FUNCTION**
+    st.markdown("---")
+    st.markdown("## Confusion Matrix")
+    y_true_input = st.text_area("Actual (comma-separated)", value="A, B, A, C", key="cm_true_2", help="e.g., A, B, A, C")
+    y_pred_input = st.text_area("Predicted (comma-separated)", value="A, A, C, C", key="cm_pred_2", help="e.g., A, A, C, C")
+    
+    if y_true_input and y_pred_input:
+        y_true = [x.strip() for x in y_true_input.split(",") if x.strip()]
+        y_pred = [x.strip() for x in y_pred_input.split(",") if x.strip()]
+        labels = sorted(set(y_true + y_pred))
+        if len(y_true) == len(y_pred) and y_true and y_pred:
+            try:
+                cm = confusion_matrix(y_true, y_pred, labels=labels)
+                fig_cm = ff.create_annotated_heatmap(
+                    cm, x=labels, y=labels, colorscale='Blues', showscale=True,
+                    annotation_text=[[str(cell) for cell in row] for row in cm]
+                )
+                fig_cm.update_layout(xaxis_title="Predicted", yaxis_title="Actual", title="Confusion Matrix")
+                st.plotly_chart(fig_cm, use_container_width=True)
+            except ValueError as ve:
+                 st.warning(f"Could not compute Confusion Matrix. Error: {ve}")
+        else:
+            st.warning("Input lists must be the same length and not empty.")
+    else:
+         st.info("Enter actual and predicted labels to see the Confusion Matrix.")
+    st.markdown("---")
+    # **END OF CONFUSION MATRIX LOGIC**
+
+
     st.markdown("## Correlation Heatmap")
     # Need to check df is not empty before correlation calculation
     if not df.empty:
+        # Exclude 'date' column for correlation if it was not already converted to numeric
         num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         if len(num_cols) >= 2:
             corr = df[num_cols].corr()
@@ -421,7 +501,7 @@ def show_dashboard():
             st.info("No numeric columns for correlation heatmap.")
     else:
         st.info("Data is empty after initial cleaning; cannot compute correlation.")
-    # --- End of logic moved inside the function ---
+    st.markdown("---")
 
     # Sidebar filters
     st.sidebar.header("Filters")
@@ -430,7 +510,7 @@ def show_dashboard():
         st.warning("No valid data remains after initial cleaning. Please check your file.")
         return
 
-    all_crime_types = sorted(df["crime_type"].dropna().unique().tolist())
+    all_crime_types = sorted(df["crime_type"].dropna().astype(str).unique().tolist())
     crime_search = st.sidebar.text_input("Search Crime Types")
     if crime_search:
         filtered_types = [ct for ct in all_crime_types if crime_search.lower() in str(ct).lower()]
@@ -444,42 +524,50 @@ def show_dashboard():
     )
     
     if selected_types:
-        df = df[df["crime_type"].isin(selected_types)]
+        df = df[df["crime_type"].astype(str).isin(selected_types)]
 
     if "date" in df.columns and not df.empty:
         try:
-            min_date = df["date"].min().date()
-            max_date = df["date"].max().date()
-            date_range = st.sidebar.date_input("Date Range", [min_date, max_date])
-            if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
-                start, end = date_range
-                # Ensure the date comparison is done correctly
-                df = df[(df["date"].dt.date >= start) & (df["date"].dt.date <= end)]
+            # Drop NaT values before finding min/max
+            date_col = df["date"].dropna()
+            if not date_col.empty:
+                min_date = date_col.min().date()
+                max_date = date_col.max().date()
+                date_range = st.sidebar.date_input("Date Range", [min_date, max_date])
+                if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
+                    start, end = date_range
+                    # Ensure the date comparison is done correctly
+                    df = df[(df["date"].dt.date >= start) & (df["date"].dt.date <= end)]
         except Exception:
-            pass
+            st.sidebar.warning("Could not filter by date range.")
 
     if "date" in df.columns and not df.empty:
+        df = df.copy() # Avoid SettingWithCopyWarning
         df["hour"] = df["date"].dt.hour
         hour_range = st.sidebar.slider("Hour Range (0–23)", 0, 23, (0, 23), step=1)
         df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
-        avail_hours = sorted(df["hour"].dropna().unique().tolist())
+        avail_hours = sorted(df["hour"].dropna().astype(int).unique().tolist())
         st.sidebar.caption(f"Available hours after filters: {avail_hours}" if avail_hours else "No records in selected hour range.")
 
     region_cols = [c for c in df.columns if c.lower() in ["region", "city", "district"]]
     if region_cols:
         region_col = region_cols[0]
-        region_vals = sorted(df[region_col].dropna().unique().tolist())
+        region_vals = sorted(df[region_col].dropna().astype(str).unique().tolist())
         selected_regions = st.sidebar.multiselect("Region", region_vals, default=region_vals)
         if selected_regions:
-            df = df[df[region_col].isin(selected_regions)]
+            df = df[df[region_col].astype(str).isin(selected_regions)]
     else:
         st.sidebar.markdown("**Region (derived from Lat/Lon grid)**")
         grid_size = st.sidebar.slider("Grid size (degrees)", 0.01, 0.5, 0.05, 0.01)
         # Only perform grid binning if lat/lon are present and non-empty after filtering
         if not df.empty and "latitude" in df.columns and "longitude" in df.columns:
+            df = df.copy() # Avoid SettingWithCopyWarning
+            df["latitude"] = pd.to_numeric(df["latitude"], errors='coerce')
+            df["longitude"] = pd.to_numeric(df["longitude"], errors='coerce')
             lat_bin = np.round(df["latitude"] / grid_size) * grid_size
             lon_bin = np.round(df["longitude"] / grid_size) * grid_size
             df["region_grid"] = lat_bin.round(4).astype(str) + "," + lon_bin.round(4).astype(str)
+            
             grid_regions = sorted(df["region_grid"].dropna().unique().tolist())
             selected_grids = st.sidebar.multiselect("Region (grid)", grid_regions, default=grid_regions)
             if selected_grids:
@@ -516,16 +604,20 @@ def show_dashboard():
     elif role == "analyst":
         st.success("Analyst View")
         period = st.radio("Granularity", ["Daily", "Weekly", "Monthly"], index=0, horizontal=True)
+        
+        # Ensure only non-null dates are used for grouping
+        df_dt = df.dropna(subset=["date"]).copy()
+        
         if period == "Daily":
-            trend_df = df.groupby(df["date"].dt.date).size().reset_index(name="count")
+            trend_df = df_dt.groupby(df_dt["date"].dt.date).size().reset_index(name="count")
             trend_df.rename(columns={"date": "ds"}, inplace=True)
-            xcol = trend_df.columns[0]
+            xcol = "ds"
         elif period == "Weekly":
-            trend_df = df.groupby(df["date"].dt.to_period("W")).size().reset_index(name="count")
+            trend_df = df_dt.groupby(df_dt["date"].dt.to_period("W")).size().reset_index(name="count")
             trend_df["date"] = trend_df["date"].astype(str)
             xcol = "date"
         else:
-            trend_df = df.groupby(df["date"].dt.to_period("M")).size().reset_index(name="count")
+            trend_df = df_dt.groupby(df_dt["date"].dt.to_period("M")).size().reset_index(name="count")
             trend_df["date"] = trend_df["date"].astype(str)
             xcol = "date"
 
@@ -539,9 +631,29 @@ def show_dashboard():
         st.markdown("---")
         st.subheader("Hourly Heatmap by Crime Type (counts)")
         try:
-            heat_df = df.groupby([df["hour"], df["crime_type"]]).size().reset_index(name="count")
-            heat_pivot = heat_df.pivot_table(index="hour", columns="crime_type", values="count", fill_value=0)
+            heat_df = df.dropna(subset=["hour", "crime_type"]).copy()
+            heat_df["hour"] = heat_df["hour"].astype(int)
+            heat_df["crime_type"] = heat_df["crime_type"].astype(str)
+            
+            heat_df_agg = heat_df.groupby(["hour", "crime_type"]).size().reset_index(name="count")
+            heat_pivot = heat_df_agg.pivot_table(index="hour", columns="crime_type", values="count", fill_value=0)
             st.dataframe(heat_pivot)
+            
+            # Optional: Display as a Plotly heatmap
+            if not heat_pivot.empty:
+                fig_heat = px.imshow(
+                    heat_pivot,
+                    x=heat_pivot.columns,
+                    y=heat_pivot.index,
+                    color_continuous_scale="Viridis",
+                    title="Hourly Heatmap by Crime Type"
+                )
+                fig_heat.update_xaxes(side="top")
+                st.plotly_chart(fig_heat, use_container_width=True)
+                p_heat = save_plotly_as_image(fig_heat)
+                if p_heat:
+                    chart_paths.append(p_heat)
+            
         except Exception:
             st.info("Not enough data for heatmap.")
 
@@ -616,6 +728,9 @@ def show_dashboard():
                     x=forecast["ds"], y=forecast["yhat"],
                     mode="lines", name="Predicted", line=dict(color="blue")
                 )
+                
+                # Update layout for better visibility
+                fig_fore.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
 
                 st.plotly_chart(fig_fore, use_container_width=True)
 
@@ -631,7 +746,7 @@ def show_dashboard():
         st.subheader("🔥 Crime Hotspot Detection ")
         try:
             # Requires scikit-learn library to be installed: pip install scikit-learn
-            loc_df = df[["latitude", "longitude"]].dropna()
+            loc_df = df[["latitude", "longitude"]].dropna().copy()
             if len(loc_df) < 3:
                 st.warning("Need at least 3 points for hotspot detection.")
             else:
@@ -639,14 +754,14 @@ def show_dashboard():
                 default_k = min(3, max_k)
                 k = st.slider("Clusters (k)", 2, max_k, default_k)
                 
-                # Kmeans is now instantiated outside the loop
                 kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
-                loc_df = loc_df.copy()
                 loc_df["cluster"] = kmeans.fit_predict(loc_df)
+                loc_df["cluster"] = loc_df["cluster"].astype(str) # Convert to string for discrete colors
                 
                 fig_hot = px.scatter_mapbox(
                     loc_df, lat="latitude", lon="longitude", color="cluster",
-                    color_continuous_scale=px.colors.sequential.Inferno, 
+                    # Changed to a discrete color sequence since cluster is categorical
+                    color_discrete_sequence=px.colors.qualitative.Bold, 
                     title="Hotspots (KMeans)", mapbox_style="carto-positron", zoom=10, height=500
                 )
                 st.plotly_chart(fig_hot, use_container_width=True)
@@ -662,13 +777,14 @@ def show_dashboard():
         st.subheader("📄 Export Report (PDF)")
         include_charts = st.checkbox("Include charts in PDF", value=True)
         if st.button("Generate PDF Report"):
-            pdf_bytes = generate_pdf_report(df, username, chart_paths if include_charts else [], alerts)
-            cleanup_temp_images()
-            st.download_button(
-                "Download Report (PDF)", data=pdf_bytes,
-                file_name=f"crime_report_{username}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                mime="application/pdf"
-            )
+            with st.spinner("Generating PDF..."):
+                pdf_bytes = generate_pdf_report(df, username, chart_paths if include_charts else [], alerts)
+                cleanup_temp_images()
+                st.download_button(
+                    "Download Report (PDF)", data=pdf_bytes,
+                    file_name=f"crime_report_{username}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf"
+                )
 
     st.markdown("---")
     st.markdown("## Summary Metrics")
