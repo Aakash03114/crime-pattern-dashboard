@@ -349,7 +349,10 @@ def show_dashboard():
 
     uploaded_file = st.file_uploader("Upload Crime Data File (CSV or Excel)", type=["csv", "xlsx", "xls"])
     
-    # ---------------- Confusion Matrix (Placed correctly here) ----------------
+    # Initialize chart_paths here
+    chart_paths = []
+    
+    # ---------------- Confusion Matrix ----------------
     st.markdown("---")
     st.markdown("## Confusion Matrix")
     y_true_input = st.text_area("Actual (comma-separated)", value="A, B, A, C", key="cm_true_2", help="e.g., A, B, A, C")
@@ -368,6 +371,10 @@ def show_dashboard():
                 )
                 fig_cm.update_layout(xaxis_title="Predicted", yaxis_title="Actual", title="Confusion Matrix")
                 st.plotly_chart(fig_cm, use_container_width=True) 
+                # ADDITION: Capture Confusion Matrix image for PDF
+                p_cm = save_plotly_as_image(fig_cm)
+                if p_cm:
+                    chart_paths.append(p_cm)
             except ValueError as ve:
                  st.warning(f"Could not compute Confusion Matrix. Error: {ve}")
         else:
@@ -444,6 +451,7 @@ def show_dashboard():
 
     
     st.markdown("## Correlation Heatmap")
+    fig_corr = None
     if not df.empty:
         num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         if len(num_cols) >= 2:
@@ -457,6 +465,10 @@ def show_dashboard():
                 title="Correlation Matrix"
             )
             st.plotly_chart(fig_corr, use_container_width=True) 
+            # ADDITION: Capture Correlation Heatmap image for PDF
+            p_corr = save_plotly_as_image(fig_corr)
+            if p_corr:
+                chart_paths.append(p_corr)
         else:
             st.info("No numeric columns for correlation heatmap.")
     else:
@@ -543,8 +555,6 @@ def show_dashboard():
         for a in alerts:
             st.warning(a)
 
-    chart_paths = []
-    
     st.markdown("---") 
     
     if role == "public":
