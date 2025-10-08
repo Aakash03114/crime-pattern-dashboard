@@ -259,7 +259,7 @@ def show_forgot_password():
                 save_users(users) 
                 st.success("Password reset! You may now sign in with your new password.")
                 st.session_state.show_forgot_pw = False
-                st.rerun() # Replaced st.experimental_rerun()
+                st.rerun() 
             except Exception as e:
                 st.error(f"Error saving new password: {e}.")
 
@@ -268,7 +268,7 @@ def show_login():
     if st.session_state.get("show_forgot_pw", False):
         if st.button("← Back to Login"):
             st.session_state.show_forgot_pw = False
-            st.rerun() # Replaced st.experimental_rerun()
+            st.rerun() 
             return
         show_forgot_password()
         return
@@ -300,7 +300,7 @@ def show_login():
                 st.session_state.role = role
                 st.success(f"Logged in as {username} ({role})")
                 try:
-                    st.rerun() # Replaced st.experimental_rerun()
+                    st.rerun() 
                 except Exception:
                     pass
             else:
@@ -308,7 +308,7 @@ def show_login():
         
         if forgot_pw_button:
             st.session_state.show_forgot_pw = True
-            st.rerun() # Replaced st.experimental_rerun()
+            st.rerun() 
 
 
     st.markdown("---")
@@ -339,7 +339,7 @@ def show_dashboard():
         st.session_state.username = ""
         st.session_state.role = ""
         try:
-            st.rerun() # Replaced st.experimental_rerun()
+            st.rerun() 
         except Exception:
             pass
         return
@@ -367,7 +367,7 @@ def show_dashboard():
                     annotation_text=[[str(cell) for cell in row] for row in cm]
                 )
                 fig_cm.update_layout(xaxis_title="Predicted", yaxis_title="Actual", title="Confusion Matrix")
-                st.plotly_chart(fig_cm, width='stretch') # Replaced use_container_width=True
+                st.plotly_chart(fig_cm, use_container_width=True) 
             except ValueError as ve:
                  st.warning(f"Could not compute Confusion Matrix. Error: {ve}")
         else:
@@ -399,7 +399,7 @@ def show_dashboard():
         return
 
     st.markdown("### Raw Data Preview")
-    st.dataframe(raw_df.head(20), width='stretch') # Replaced use_container_width=True
+    st.dataframe(raw_df.head(20), use_container_width=True) 
 
     raw_stats = {
         "Rows": int(len(raw_df)),
@@ -421,7 +421,7 @@ def show_dashboard():
     df = df.dropna(subset=["date", "latitude", "longitude", "crime_type"]).reset_index(drop=True)
 
     st.markdown("### Cleaned Data Preview")
-    st.dataframe(df.head(20), width='stretch') # Replaced use_container_width=True
+    st.dataframe(df.head(20), use_container_width=True) 
 
     clean_stats = {
         "Rows": int(len(df)),
@@ -456,7 +456,7 @@ def show_dashboard():
                 aspect="auto",
                 title="Correlation Matrix"
             )
-            st.plotly_chart(fig_corr, width='stretch') # Replaced use_container_width=True
+            st.plotly_chart(fig_corr, use_container_width=True) 
         else:
             st.info("No numeric columns for correlation heatmap.")
     else:
@@ -553,7 +553,7 @@ def show_dashboard():
         vc.columns = ["crime_type", "count"]
         fig_bar = px.bar(vc, x="crime_type", y="count", title="Crime Frequency by Type",
                          labels={"crime_type": "Crime Type", "count": "Count"})
-        st.plotly_chart(fig_bar, width='stretch') # Replaced use_container_width=True
+        st.plotly_chart(fig_bar, use_container_width=True) 
         p = save_plotly_as_image(fig_bar)
         if p:
             chart_paths.append(p)
@@ -579,7 +579,7 @@ def show_dashboard():
 
         fig_trend = px.line(trend_df, x=xcol, y="count", markers=True, title=f"Crime Trend ({period})")
         fig_trend.update_layout(xaxis_title=period, yaxis_title="Incidents")
-        st.plotly_chart(fig_trend, width='stretch') # Replaced use_container_width=True
+        st.plotly_chart(fig_trend, use_container_width=True) 
         p = save_plotly_as_image(fig_trend)
         if p:
             chart_paths.append(p)
@@ -603,7 +603,7 @@ def show_dashboard():
                     title="Hourly Heatmap by Crime Type"
                 )
                 fig_heat.update_xaxes(side="top")
-                st.plotly_chart(fig_heat, width='stretch') # Replaced use_container_width=True
+                st.plotly_chart(fig_heat, use_container_width=True) 
                 p_heat = save_plotly_as_image(fig_heat)
                 if p_heat:
                     chart_paths.append(p_heat)
@@ -616,20 +616,20 @@ def show_dashboard():
     elif role == "law_enforcement":
         st.success("Law Enforcement View")
         st.subheader("Filtered Raw Data")
-        st.dataframe(df, width='stretch') # Replaced use_container_width=True
+        st.dataframe(df, use_container_width=True) 
 
         st.markdown("---")
         st.subheader("Crime Incidents Map")
         try:
             map_df = df.dropna(subset=["latitude", "longitude"])
             if not map_df.empty:
-                # Replaced px.scatter_mapbox with px.scatter_map
+                # FIX: Replaced mapbox_style with map_style
                 fig_map = px.scatter_map(
                     map_df, lat="latitude", lon="longitude", color="crime_type",
-                    hover_name="crime_type", zoom=10, mapbox_style="carto-positron",
+                    hover_name="crime_type", zoom=10, map_style="carto-positron",
                     title="Crime Incidents by Type", height=500
                 )
-                st.plotly_chart(fig_map, width='stretch') # Replaced use_container_width=True
+                st.plotly_chart(fig_map, use_container_width=True) 
                 p = save_plotly_as_image(fig_map)
                 if p:
                     chart_paths.append(p)
@@ -684,7 +684,7 @@ def show_dashboard():
                 
                 fig_fore.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
 
-                st.plotly_chart(fig_fore, width='stretch') # Replaced use_container_width=True
+                st.plotly_chart(fig_fore, use_container_width=True) 
 
                 p = save_plotly_as_image(fig_fore)
                 if p:
@@ -709,13 +709,13 @@ def show_dashboard():
                 loc_df["cluster"] = kmeans.fit_predict(loc_df)
                 loc_df["cluster"] = loc_df["cluster"].astype(str)
                 
-                # Replaced px.scatter_mapbox with px.scatter_map
+                # FIX: Replaced mapbox_style with map_style
                 fig_hot = px.scatter_map(
                     loc_df, lat="latitude", lon="longitude", color="cluster",
                     color_discrete_sequence=px.colors.qualitative.Bold, 
-                    title="Hotspots (KMeans)", mapbox_style="carto-positron", zoom=10, height=500
+                    title="Hotspots (KMeans)", map_style="carto-positron", zoom=10, height=500
                 )
-                st.plotly_chart(fig_hot, width='stretch') # Replaced use_container_width=True
+                st.plotly_chart(fig_hot, use_container_width=True) 
                 p = save_plotly_as_image(fig_hot)
                 if p:
                     chart_paths.append(p)
