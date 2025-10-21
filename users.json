@@ -1,59 +1,24 @@
 {
-    "users": [
-        {
-            "username": "public",
-            "password": "public123",
-            "role": "public"
-        },
-        {
-            "username": "analyst",
-            "password": "analyst123",
-            "role": "analyst"
-        },
-        {
-            "username": "law",
-            "password": "law123",
-            "role": "law_enforcement"
-        },
-        {
-            "username": "ewq",
-            "password": "321",
-            "role": "law_enforcement"
-        },
-        {
-            "username": "gfd",
-            "password": "12",
-            "role": "law_enforcement"
-        },
-        {
-            "username": "qwe",
-            "password": "123",
-            "role": "law_enforcement"
-        },
-        {
-            "username": "cxz",
-            "password": "1",
-            "role": "law_enforcement"
-        },
-        {
-            "username": "qwe1",
-            "password": "1",
-            "role": "law_enforcement"
-        },
-        {
-            "username": "asd",
-            "password": "1",
-            "role": "law_enforcement"
-        },
-        {
-            "username": "hgf",
-            "password": "1",
-            "role": "law_enforcement"
-        },
-        {
-            "username": "rty",
-            "password": "1",
-            "role": "law_enforcement"
-        }
-    ]
+  "users": [
+    {
+      "username": "public",
+      "password": "public123",
+      "role": "public"
+    },
+    {
+      "username": "analyst",
+      "password": "analyst123",
+      "role": "analyst"
+    },
+    {
+      "username": "law",
+      "password": "law123",
+      "role": "law_enforcement"
+    },
+    {
+      "username": "staff",
+      "password": "1",
+      "role": "law_enforcement"
+    }
+  ]
 }
