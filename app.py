@@ -1,4 +1,4 @@
-# app.py - Crime Pattern Dashboard (full) with PDF unicode-safe export
+# app.py - Crime Pattern Dashboard (full) with PDF unicode-safe export + 30-day Forecast
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,16 +8,34 @@ import io
 import os
 import tempfile
 import glob
-import plotly.express as px
-from datetime import datetime
+from datetime import datetime, timedelta
 from fpdf import FPDF
 from sklearn.metrics import confusion_matrix
 import plotly.figure_factory as ff
-from sklearn.cluster import KMeans 
-# from prophet import Prophet # REMOVED: No longer needed
+from sklearn.cluster import KMeans
+
+# Try to import forecasting libraries (Prophet preferred, then statsmodels, else fallback to linear)
+HAS_PROPHET = False
+HAS_STATS = False
+try:
+    from prophet import Prophet
+    HAS_PROPHET = True
+except Exception:
+    try:
+        from fbprophet import Prophet  # older package name fallback
+        HAS_PROPHET = True
+    except Exception:
+        HAS_PROPHET = False
+
+if not HAS_PROPHET:
+    try:
+        from statsmodels.tsa.holtwinters import ExponentialSmoothing
+        HAS_STATS = True
+    except Exception:
+        HAS_STATS = False
 
 # Define USERS_FILE globally
-USERS_FILE = "users.json" 
+USERS_FILE = "users.json"
 
 # ---------------- Placeholder Utility Functions ----------------
 def load_users():
@@ -50,10 +68,10 @@ def create_user(username, password, role):
         users_data = load_users()
         if any(u["username"] == username for u in users_data.get("users", [])):
             return False # User already exists
-        
+
         if "users" not in users_data:
              users_data["users"] = []
-             
+
         users_data["users"].append({"username": username, "password": password, "role": role})
         save_users(users_data)
         return True
@@ -109,11 +127,11 @@ def save_plotly_as_image(fig):
     try:
         tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         tmp.close()
-        # Use fig.write_image for Plotly figures
+        # Use fig.write_image for Plotly figures (requires kaleido)
         fig.write_image(tmp.name, format="png")
         return tmp.name
     except Exception as e:
-        st.warning(f"Could not save chart image. Ensure 'kaleido' is installed (`pip install kaleido`): {e}")
+        st.warning(f"Could not save chart image. Ensure 'kaleido' is installed (`pip install kaleido`). Error: {e}")
         try:
             if tmp and os.path.exists(tmp.name):
                 os.remove(tmp.name)
@@ -222,15 +240,94 @@ def generate_pdf_report(df, username, chart_paths, alerts):
     return pdf_bytes
 
 
+# ---------------- Forecasting utilities ----------------
+def build_daily_counts(df):
+    dfc = df.dropna(subset=["date"]).copy()
+    dfc["date"] = pd.to_datetime(dfc["date"], errors="coerce")
+    dfc = dfc.dropna(subset=["date"])
+    daily = dfc.groupby(dfc["date"].dt.date).size().reset_index(name="count")
+    daily["ds"] = pd.to_datetime(daily["date"])
+    daily = daily[["ds", "count"]].sort_values("ds").reset_index(drop=True)
+    return daily
+
+def forecast_with_prophet(daily_df, periods=30):
+    # expects daily_df with columns: ds (datetime), count (int)
+    m = Prophet(daily_seasonality=True, weekly_seasonality=True, yearly_seasonality=True)
+    dfp = daily_df.rename(columns={"count": "y"})[["ds", "y"]]
+    m.fit(dfp)
+    future = m.make_future_dataframe(periods=periods)
+    forecast = m.predict(future)
+    # Return subset for forecast period (future tail)
+    fc = forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]]
+    return fc
+
+def forecast_with_statsmodels(daily_df, periods=30):
+    # Use ExponentialSmoothing on the count series if available
+    daily_df = daily_df.set_index("ds").asfreq("D").fillna(0)
+    model = ExponentialSmoothing(daily_df["count"], trend="add", seasonal=None, initialization_method="estimated")
+    fit = model.fit(optimized=True)
+    fc = fit.forecast(periods=periods)
+    idx = pd.date_range(start=daily_df.index.max() + pd.Timedelta(days=1), periods=periods, freq="D")
+    df_fc = pd.DataFrame({"ds": idx, "yhat": fc.values})
+    df_fc["yhat_lower"] = df_fc["yhat"] * 0.9
+    df_fc["yhat_upper"] = df_fc["yhat"] * 1.1
+    return df_fc
+
+def forecast_with_linear(daily_df, periods=30):
+    # Simple linear regression on time index
+    daily_df = daily_df.copy()
+    daily_df = daily_df.set_index("ds").asfreq("D").fillna(0).reset_index()
+    daily_df["t"] = np.arange(len(daily_df))
+    coeffs = np.polyfit(daily_df["t"], daily_df["count"], 1)
+    trend = np.polyval(coeffs, daily_df["t"])
+    last_t = daily_df["t"].iloc[-1]
+    future_ts = np.arange(last_t + 1, last_t + 1 + periods)
+    preds = np.polyval(coeffs, future_ts)
+    idx = pd.date_range(start=daily_df["ds"].iloc[-1] + pd.Timedelta(days=1), periods=periods, freq="D")
+    df_fc = pd.DataFrame({"ds": idx, "yhat": preds})
+    df_fc["yhat_lower"] = df_fc["yhat"] * 0.9
+    df_fc["yhat_upper"] = df_fc["yhat"] * 1.1
+    return df_fc
+
+def compute_forecast(daily_df, periods=30):
+    if daily_df is None or daily_df.empty:
+        return None, "No data"
+    # Try Prophet
+    try:
+        if HAS_PROPHET:
+            fc = forecast_with_prophet(daily_df, periods=periods)
+            method = "prophet"
+            return fc, method
+    except Exception as e:
+        # fallthrough to next
+        st.warning(f"Prophet forecasting failed: {e}")
+
+    try:
+        if HAS_STATS:
+            fc = forecast_with_statsmodels(daily_df, periods=periods)
+            method = "statsmodels_expsmoothing"
+            return fc, method
+    except Exception as e:
+        st.warning(f"Statsmodels forecasting failed: {e}")
+
+    try:
+        fc = forecast_with_linear(daily_df, periods=periods)
+        method = "linear_trend"
+        return fc, method
+    except Exception as e:
+        st.warning(f"Linear forecasting failed: {e}")
+        return None, "failed"
+
+
 # ---------------- Login / Signup ----------------
 def show_forgot_password():
     st.subheader("Reset Your Password")
     uname = st.text_input("Enter your username", key="forgot_pw_user")
     if not uname:
         return
-    
+
     try:
-        users = load_users() 
+        users = load_users()
     except Exception as e:
         st.error(f"Error loading users: {e}.")
         return
@@ -253,12 +350,12 @@ def show_forgot_password():
                 if u["username"] == uname:
                     u["password"] = new_pw
                     break
-            
+
             try:
-                save_users(users) 
+                save_users(users)
                 st.success("Password reset! You may now sign in with your new password.")
                 st.session_state.show_forgot_pw = False
-                st.rerun() 
+                st.rerun()
             except Exception as e:
                 st.error(f"Error saving new password: {e}.")
 
@@ -267,7 +364,7 @@ def show_login():
     if st.session_state.get("show_forgot_pw", False):
         if st.button("← Back to Login"):
             st.session_state.show_forgot_pw = False
-            st.rerun() 
+            st.rerun()
             return
         show_forgot_password()
         return
@@ -287,10 +384,10 @@ def show_login():
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
         role_select = st.selectbox("Role", ["public", "analyst", "law_enforcement"])
-        
+
         login_button = st.button("Login")
         forgot_pw_button = st.button("Forgot Password?")
-        
+
         if login_button:
             role = authenticate_user(username, password)
             if role and role == role_select:
@@ -299,15 +396,15 @@ def show_login():
                 st.session_state.role = role
                 st.success(f"Logged in as {username} ({role})")
                 try:
-                    st.rerun() 
+                    st.rerun()
                 except Exception:
                     pass
             else:
                 st.error("Invalid credentials or role mismatch.")
-        
+
         if forgot_pw_button:
             st.session_state.show_forgot_pw = True
-            st.rerun() 
+            st.rerun()
 
 
     st.markdown("---")
@@ -331,14 +428,14 @@ def show_login():
 def show_dashboard():
     role = st.session_state.role
     username = st.session_state.username
-    
+
     st.sidebar.markdown(f"**Logged in as:** {username} ({role})")
     if st.sidebar.button("Logout"):
         st.session_state.logged_in = False
         st.session_state.username = ""
         st.session_state.role = ""
         try:
-            st.rerun() 
+            st.rerun()
         except Exception:
             pass
         return
@@ -347,16 +444,16 @@ def show_dashboard():
     st.markdown("Upload a CSV or Excel file containing columns: `date`, `crime_type`, `latitude`, `longitude` (optional: region/city/district).")
 
     uploaded_file = st.file_uploader("Upload Crime Data File (CSV or Excel)", type=["csv", "xlsx", "xls"])
-    
+
     # Initialize chart_paths here
     chart_paths = []
-    
+
     # ---------------- Confusion Matrix ----------------
     st.markdown("---")
     st.markdown("## Confusion Matrix")
     y_true_input = st.text_area("Actual (comma-separated)", value="A, B, A, C", key="cm_true_2", help="e.g., A, B, A, C")
     y_pred_input = st.text_area("Predicted (comma-separated)", value="A, A, C, C", key="cm_pred_2", help="e.g., A, A, C, C")
-    
+
     if y_true_input and y_pred_input:
         y_true = [x.strip() for x in y_true_input.split(",") if x.strip()]
         y_pred = [x.strip() for x in y_pred_input.split(",") if x.strip()]
@@ -369,8 +466,8 @@ def show_dashboard():
                     annotation_text=[[str(cell) for cell in row] for row in cm]
                 )
                 fig_cm.update_layout(xaxis_title="Predicted", yaxis_title="Actual", title="Confusion Matrix")
-                st.plotly_chart(fig_cm, use_container_width=True) 
-                # ADDITION: Capture Confusion Matrix image for PDF
+                st.plotly_chart(fig_cm, use_container_width=True)
+                # Capture Confusion Matrix image for PDF
                 p_cm = save_plotly_as_image(fig_cm)
                 if p_cm:
                     chart_paths.append(p_cm)
@@ -385,7 +482,7 @@ def show_dashboard():
 
     if uploaded_file is None:
         st.info("Please upload a CSV or Excel file with columns: date, crime_type, latitude, longitude.")
-        return 
+        return
 
     try:
         fname = uploaded_file.name.lower()
@@ -405,7 +502,7 @@ def show_dashboard():
         return
 
     st.markdown("### Raw Data Preview")
-    st.dataframe(raw_df.head(20), use_container_width=True) 
+    st.dataframe(raw_df.head(20), use_container_width=True)
 
     raw_stats = {
         "Rows": int(len(raw_df)),
@@ -427,7 +524,7 @@ def show_dashboard():
     df = df.dropna(subset=["date", "latitude", "longitude", "crime_type"]).reset_index(drop=True)
 
     st.markdown("### Cleaned Data Preview")
-    st.dataframe(df.head(20), use_container_width=True) 
+    st.dataframe(df.head(20), use_container_width=True)
 
     clean_stats = {
         "Rows": int(len(df)),
@@ -448,7 +545,7 @@ def show_dashboard():
     st.markdown("**Data Cleaning Summary**")
     st.write(diff_stats)
 
-    
+
     st.markdown("## Correlation Heatmap")
     fig_corr = None
     if not df.empty:
@@ -463,8 +560,8 @@ def show_dashboard():
                 aspect="auto",
                 title="Correlation Matrix"
             )
-            st.plotly_chart(fig_corr, use_container_width=True) 
-            # ADDITION: Capture Correlation Heatmap image for PDF
+            st.plotly_chart(fig_corr, use_container_width=True)
+            # Capture Correlation Heatmap image for PDF
             p_corr = save_plotly_as_image(fig_corr)
             if p_corr:
                 chart_paths.append(p_corr)
@@ -476,7 +573,7 @@ def show_dashboard():
 
     # Sidebar filters
     st.sidebar.header("Filters")
-    
+
     if df.empty:
         st.warning("No valid data remains after initial cleaning. Please check your file.")
         return
@@ -493,7 +590,7 @@ def show_dashboard():
         options=filtered_types,
         default=filtered_types if not crime_search else filtered_types
     )
-    
+
     if selected_types:
         df = df[df["crime_type"].astype(str).isin(selected_types)]
 
@@ -511,7 +608,7 @@ def show_dashboard():
             st.sidebar.warning("Could not filter by date range.")
 
     if "date" in df.columns and not df.empty:
-        df = df.copy() 
+        df = df.copy()
         df["hour"] = df["date"].dt.hour
         hour_range = st.sidebar.slider("Hour Range (0–23)", 0, 23, (0, 23), step=1)
         df = df[(df["hour"] >= hour_range[0]) & (df["hour"] <= hour_range[1])]
@@ -529,13 +626,13 @@ def show_dashboard():
         st.sidebar.markdown("**Region (derived from Lat/Lon grid)**")
         grid_size = st.sidebar.slider("Grid size (degrees)", 0.01, 0.5, 0.05, 0.01)
         if not df.empty and "latitude" in df.columns and "longitude" in df.columns:
-            df = df.copy() 
+            df = df.copy()
             df["latitude"] = pd.to_numeric(df["latitude"], errors='coerce')
             df["longitude"] = pd.to_numeric(df["longitude"], errors='coerce')
             lat_bin = np.round(df["latitude"] / grid_size) * grid_size
             lon_bin = np.round(df["longitude"] / grid_size) * grid_size
             df["region_grid"] = lat_bin.round(4).astype(str) + "," + lon_bin.round(4).astype(str)
-            
+
             grid_regions = sorted(df["region_grid"].dropna().unique().tolist())
             selected_grids = st.sidebar.multiselect("Region (grid)", grid_regions, default=grid_regions)
             if selected_grids:
@@ -554,15 +651,18 @@ def show_dashboard():
         for a in alerts:
             st.warning(a)
 
-    st.markdown("---") 
-    
+    st.markdown("---")
+
+    # ---------------- Role-specific views ----------------
+    forecast_chart_added = False  # track if we appended forecast chart to chart_paths
+
     if role == "public":
         st.info("Public View: Aggregated summary")
         vc = df["crime_type"].value_counts().reset_index()
         vc.columns = ["crime_type", "count"]
         fig_bar = px.bar(vc, x="crime_type", y="count", title="Crime Frequency by Type",
                          labels={"crime_type": "Crime Type", "count": "Count"})
-        st.plotly_chart(fig_bar, use_container_width=True) 
+        st.plotly_chart(fig_bar, use_container_width=True)
         p = save_plotly_as_image(fig_bar)
         if p:
             chart_paths.append(p)
@@ -570,39 +670,42 @@ def show_dashboard():
     elif role == "analyst":
         st.success("Analyst View")
         period = st.radio("Granularity", ["Daily", "Weekly", "Monthly"], index=0, horizontal=True)
-        
+
         df_dt = df.dropna(subset=["date"]).copy()
-        
+
         if period == "Daily":
             trend_df = df_dt.groupby(df_dt["date"].dt.date).size().reset_index(name="count")
             trend_df.rename(columns={"date": "ds"}, inplace=True)
+            trend_df["ds"] = pd.to_datetime(trend_df["ds"])
             xcol = "ds"
         elif period == "Weekly":
             trend_df = df_dt.groupby(df_dt["date"].dt.to_period("W")).size().reset_index(name="count")
             trend_df["date"] = trend_df["date"].astype(str)
-            xcol = "date"
+            trend_df["ds"] = pd.to_datetime(trend_df["date"].apply(lambda x: pd.Period(x).start_time))
+            xcol = "ds"
         else:
             trend_df = df_dt.groupby(df_dt["date"].dt.to_period("M")).size().reset_index(name="count")
             trend_df["date"] = trend_df["date"].astype(str)
-            xcol = "date"
+            trend_df["ds"] = pd.to_datetime(trend_df["date"].apply(lambda x: pd.Period(x).start_time))
+            xcol = "ds"
 
         fig_trend = px.line(trend_df, x=xcol, y="count", markers=True, title=f"Crime Trend ({period})")
         fig_trend.update_layout(xaxis_title=period, yaxis_title="Incidents")
-        st.plotly_chart(fig_trend, use_container_width=True) 
+        st.plotly_chart(fig_trend, use_container_width=True)
         p = save_plotly_as_image(fig_trend)
         if p:
             chart_paths.append(p)
-            
+
         st.markdown("---")
         st.subheader("Hourly Heatmap by Crime Type (counts)")
         try:
             heat_df = df.dropna(subset=["hour", "crime_type"]).copy()
             heat_df["hour"] = heat_df["hour"].astype(int)
             heat_df["crime_type"] = heat_df["crime_type"].astype(str)
-            
+
             heat_df_agg = heat_df.groupby(["hour", "crime_type"]).size().reset_index(name="count")
             heat_pivot = heat_df_agg.pivot_table(index="hour", columns="crime_type", values="count", fill_value=0)
-            
+
             if not heat_pivot.empty:
                 fig_heat = px.imshow(
                     heat_pivot,
@@ -612,33 +715,76 @@ def show_dashboard():
                     title="Hourly Heatmap by Crime Type"
                 )
                 fig_heat.update_xaxes(side="top")
-                st.plotly_chart(fig_heat, use_container_width=True) 
+                st.plotly_chart(fig_heat, use_container_width=True)
                 p_heat = save_plotly_as_image(fig_heat)
                 if p_heat:
                     chart_paths.append(p_heat)
             else:
                  st.info("Not enough data for heatmap.")
-            
+
         except Exception:
             st.info("Not enough data for heatmap.")
+
+        # Forecasting - Analyst
+        st.markdown("---")
+        st.subheader("📈 Crime Forecast (Next 30 days)")
+        st.caption("Forecast derived from historical daily counts. The app will try Prophet → statsmodels ExponentialSmoothing → linear trend fallback.")
+        forecast_enable = st.checkbox("Enable 30-day forecast", value=True)
+        if forecast_enable:
+            with st.spinner("Computing forecast..."):
+                daily_counts = build_daily_counts(df)
+                fc_df, method = compute_forecast(daily_counts, periods=30)
+                if fc_df is None or (isinstance(fc_df, str) and fc_df.startswith("No")):
+                    st.error("Not enough date-series data to forecast.")
+                else:
+                    # prepare display chart: historical + forecast
+                    hist = daily_counts.rename(columns={"ds": "date", "count": "count"}).set_index("date").sort_index()
+                    fc_show = fc_df.copy()
+                    fc_show["date"] = pd.to_datetime(fc_show["ds"])
+                    # Build combined plotly figure
+                    fig_fc = px.line(title=f"30-day Forecast (method: {method})")
+                    if not hist.empty:
+                        fig_fc.add_scatter(x=hist.index, y=hist["count"], mode="lines+markers", name="Historical")
+                    fig_fc.add_scatter(x=fc_show["date"], y=fc_show["yhat"], mode="lines+markers", name="Forecast")
+                    # add uncertainty if available
+                    if "yhat_lower" in fc_show.columns and "yhat_upper" in fc_show.columns:
+                        fig_fc.add_traces([
+                            dict(
+                                x=list(fc_show["date"]) + list(fc_show["date"][::-1]),
+                                y=list(fc_show["yhat_upper"]) + list(fc_show["yhat_lower"][::-1]),
+                                fill='toself',
+                                fillcolor='rgba(0,100,80,0.2)',
+                                line=dict(color='rgba(255,255,255,0)'),
+                                hoverinfo="skip",
+                                showlegend=True,
+                                name="Forecast Interval"
+                            )
+                        ])
+                    fig_fc.update_layout(xaxis_title="Date", yaxis_title="Incidents", height=450)
+                    st.plotly_chart(fig_fc, use_container_width=True)
+                    p_fc = save_plotly_as_image(fig_fc)
+                    if p_fc:
+                        chart_paths.append(p_fc)
+                        forecast_chart_added = True
 
     elif role == "law_enforcement":
         st.success("Law Enforcement View")
         st.subheader("Filtered Raw Data")
-        st.dataframe(df, use_container_width=True) 
+        st.dataframe(df, use_container_width=True)
 
         st.markdown("---")
         st.subheader("Crime Incidents Map")
         try:
             map_df = df.dropna(subset=["latitude", "longitude"])
             if not map_df.empty:
-                # FIX: Replaced mapbox_style with map_style
-                fig_map = px.scatter_map(
+                fig_map = px.scatter_mapbox(
                     map_df, lat="latitude", lon="longitude", color="crime_type",
-                    hover_name="crime_type", zoom=10, map_style="carto-positron",
-                    title="Crime Incidents by Type", height=500
+                    hover_name="crime_type", zoom=10, height=500
                 )
-                st.plotly_chart(fig_map, use_container_width=True) 
+                # Use open-street-map style which doesn't require a Mapbox token
+                fig_map.update_layout(mapbox_style="open-street-map")
+                fig_map.update_layout(margin={"r":0,"t":30,"l":0,"b":0})
+                st.plotly_chart(fig_map, use_container_width=True)
                 p = save_plotly_as_image(fig_map)
                 if p:
                     chart_paths.append(p)
@@ -646,11 +792,6 @@ def show_dashboard():
                 st.info("No geolocation data to plot.")
         except Exception as e:
             st.error(f"Map error: {e}")
-
-        # st.markdown("---")
-        # # REMOVED: 📈 Crime Forecast (Next 30 days) section
-        # # ... (Original code for Prophet forecasting was here) ...
-        # # ----------------------------------------------------
 
         st.markdown("---")
         st.subheader("🔥 Crime Hotspot Detection ")
@@ -662,18 +803,19 @@ def show_dashboard():
                 max_k = min(12, max(2, len(loc_df)//2))
                 default_k = min(3, max_k)
                 k = st.slider("Clusters (k)", 2, max_k, default_k)
-                
+
                 kmeans = KMeans(n_clusters=k, random_state=42, n_init='auto')
-                loc_df["cluster"] = kmeans.fit_predict(loc_df)
+                loc_df_numeric = loc_df.astype(float)
+                loc_df["cluster"] = kmeans.fit_predict(loc_df_numeric)
                 loc_df["cluster"] = loc_df["cluster"].astype(str)
-                
-                # FIX: Replaced mapbox_style with map_style
-                fig_hot = px.scatter_map(
+
+                fig_hot = px.scatter_mapbox(
                     loc_df, lat="latitude", lon="longitude", color="cluster",
-                    color_discrete_sequence=px.colors.qualitative.Bold, 
-                    title="Hotspots (KMeans)", map_style="carto-positron", zoom=10, height=500
+                    hover_name="cluster", zoom=10, height=500
                 )
-                st.plotly_chart(fig_hot, use_container_width=True) 
+                fig_hot.update_layout(mapbox_style="open-street-map")
+                fig_hot.update_layout(margin={"r":0,"t":30,"l":0,"b":0})
+                st.plotly_chart(fig_hot, use_container_width=True)
                 p = save_plotly_as_image(fig_hot)
                 if p:
                     chart_paths.append(p)
@@ -681,6 +823,45 @@ def show_dashboard():
             st.warning("scikit-learn library not installed. Cannot show hotspot detection. Install with: `pip install scikit-learn`")
         except Exception as e:
             st.error(f"Hotspot detection error: {e}")
+
+        # Forecasting - Law enforcement view (same forecast but shown here)
+        st.markdown("---")
+        st.subheader("📈 Crime Forecast (Next 30 days)")
+        st.caption("Forecast derived from historical daily counts. The app will try Prophet → statsmodels ExponentialSmoothing → linear trend fallback.")
+        forecast_enable = st.checkbox("Enable 30-day forecast (Law view)", value=True)
+        if forecast_enable:
+            with st.spinner("Computing forecast..."):
+                daily_counts = build_daily_counts(df)
+                fc_df, method = compute_forecast(daily_counts, periods=30)
+                if fc_df is None or (isinstance(fc_df, str) and fc_df.startswith("No")):
+                    st.error("Not enough date-series data to forecast.")
+                else:
+                    hist = daily_counts.rename(columns={"ds": "date", "count": "count"}).set_index("date").sort_index()
+                    fc_show = fc_df.copy()
+                    fc_show["date"] = pd.to_datetime(fc_show["ds"])
+                    fig_fc = px.line(title=f"30-day Forecast (method: {method})")
+                    if not hist.empty:
+                        fig_fc.add_scatter(x=hist.index, y=hist["count"], mode="lines+markers", name="Historical")
+                    fig_fc.add_scatter(x=fc_show["date"], y=fc_show["yhat"], mode="lines+markers", name="Forecast")
+                    if "yhat_lower" in fc_show.columns and "yhat_upper" in fc_show.columns:
+                        fig_fc.add_traces([
+                            dict(
+                                x=list(fc_show["date"]) + list(fc_show["date"][::-1]),
+                                y=list(fc_show["yhat_upper"]) + list(fc_show["yhat_lower"][::-1]),
+                                fill='toself',
+                                fillcolor='rgba(0,100,80,0.2)',
+                                line=dict(color='rgba(255,255,255,0)'),
+                                hoverinfo="skip",
+                                showlegend=True,
+                                name="Forecast Interval"
+                            )
+                        ])
+                    fig_fc.update_layout(xaxis_title="Date", yaxis_title="Incidents", height=450)
+                    st.plotly_chart(fig_fc, use_container_width=True)
+                    p_fc = save_plotly_as_image(fig_fc)
+                    if p_fc:
+                        chart_paths.append(p_fc)
+                        forecast_chart_added = True
 
         st.markdown("---")
         st.subheader("📄 Export Report (PDF)")
