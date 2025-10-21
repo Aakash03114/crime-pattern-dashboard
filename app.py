@@ -14,7 +14,7 @@ from fpdf import FPDF
 from sklearn.metrics import confusion_matrix
 import plotly.figure_factory as ff
 from sklearn.cluster import KMeans 
-from prophet import Prophet 
+# from prophet import Prophet # REMOVED: No longer needed
 
 # Define USERS_FILE globally
 USERS_FILE = "users.json" 
@@ -207,7 +207,6 @@ def generate_pdf_report(df, username, chart_paths, alerts):
         if path and os.path.exists(path):
             try:
                 pdf.image(path, w=180)
-                pdf.ln(5)
             except Exception:
                 pass
 
@@ -380,7 +379,7 @@ def show_dashboard():
         else:
             st.warning("Input lists must be the same length and not empty.")
     else:
-         st.info("Enter actual and predicted labels to see the Confusion Matrix.")
+           st.info("Enter actual and predicted labels to see the Confusion Matrix.")
     st.markdown("---")
     # ---------------- End Confusion Matrix ----------------
 
@@ -648,61 +647,10 @@ def show_dashboard():
         except Exception as e:
             st.error(f"Map error: {e}")
 
-        st.markdown("---")
-        st.subheader("📈 Crime Forecast (Next 30 days)")
-        try:
-            ts = df.groupby(df["date"].dt.floor("d")).size().reset_index(name="y")
-            ts.rename(columns={"date": "ds"}, inplace=True)
-            ts = ts.sort_values("ds")
-            if len(ts) < 2:
-                st.warning("Not enough daily history to forecast (need at least 2 days).")
-            else:
-                model = Prophet()
-                model.fit(ts)
-                future = model.make_future_dataframe(periods=30)
-                forecast = model.predict(future)
-
-                compare_df = forecast.merge(ts, on="ds", how="left")
-
-                fig_fore = px.line(
-                    forecast, x="ds", y="yhat",
-                    labels={"ds": "Date", "yhat": "Predicted"},
-                    title="Crime Forecast (Prophet)"
-                )
-                
-                fig_fore.add_traces([
-                    dict(
-                        x=list(forecast["ds"]) + list(forecast["ds"][::-1]),
-                        y=list(forecast["yhat_upper"]) + list(forecast["yhat_lower"][::-1]),
-                        fill="toself",
-                        fillcolor="rgba(0,123,255,0.15)",
-                        line=dict(color="rgba(255,255,255,0)"),
-                        hoverinfo="skip",
-                        name="Confidence Interval"
-                    )
-                ])
-
-                fig_fore.add_scatter(
-                    x=compare_df["ds"], y=compare_df["y"],
-                    mode="markers+lines", name="Actual", line=dict(color="red")
-                )
-                
-                fig_fore.add_scatter(
-                    x=forecast["ds"], y=forecast["yhat"],
-                    mode="lines", name="Predicted", line=dict(color="blue")
-                )
-                
-                fig_fore.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-
-                st.plotly_chart(fig_fore, use_container_width=True) 
-
-                p = save_plotly_as_image(fig_fore)
-                if p:
-                    chart_paths.append(p)
-        except ImportError:
-            st.warning("Prophet library not installed. Cannot show forecast. Install with: `pip install prophet`")
-        except Exception as e:
-            st.error(f"Forecasting failed: {e}")
+        # st.markdown("---")
+        # # REMOVED: 📈 Crime Forecast (Next 30 days) section
+        # # ... (Original code for Prophet forecasting was here) ...
+        # # ----------------------------------------------------
 
         st.markdown("---")
         st.subheader("🔥 Crime Hotspot Detection ")
