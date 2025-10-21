@@ -55,7 +55,7 @@ def create_user(username, password, role):
         if "users" not in users_data:
              users_data["users"] = []
 
-        users_data["users"].append({"username": username, "password": password, "role": role})
+        users_data["users"].append({"username": new_username, "password": new_password, "role": new_role})
         save_users(users_data)
         return True
     except Exception:
@@ -682,30 +682,56 @@ def show_dashboard():
                 if fc_df is None or (isinstance(fc_df, str) and fc_df.startswith("No")):
                     st.error("Not enough date-series data to forecast.")
                 else:
-                    # prepare display chart: historical + forecast
-                    hist = daily_counts.rename(columns={"ds": "date", "count": "count"}).set_index("date").sort_index()
-                    fc_show = fc_df.copy()
-                    fc_show["date"] = pd.to_datetime(fc_show["ds"])
+                    # Prepare data for plotting
+                    fc_show = fc_df.rename(columns={"yhat": "count"})
+                    
+                    # Combine historical and forecast data
+                    hist_for_plot = daily_counts.copy()
+                    hist_for_plot['type'] = 'Historical'
+                    hist_for_plot['yhat'] = hist_for_plot['count'] # Align column name for consistent plotting
+
+                    fc_for_plot = fc_show.copy()
+                    fc_for_plot['type'] = 'Forecast'
+                    
+                    # Pad historical end point with its last value and mark it as 'Forecast' start
+                    last_hist = hist_for_plot.iloc[-1].copy()
+                    last_hist['type'] = 'Forecast' 
+                    
+                    # Combine all data: Historical + (Last Historical Point as Forecast Start) + Forecast
+                    combined_df = pd.concat([
+                        hist_for_plot[['ds', 'yhat', 'count', 'type', 'yhat_lower', 'yhat_upper']].rename(columns={'yhat': 'value'}),
+                        last_hist[['ds', 'yhat', 'count', 'type']].rename(columns={'yhat': 'value'}).to_frame().T,
+                        fc_for_plot[['ds', 'yhat', 'yhat_lower', 'yhat_upper', 'type']].rename(columns={'yhat': 'value'})
+                    ])
+                    combined_df = combined_df.sort_values('ds').reset_index(drop=True)
+                    combined_df['yhat_lower'] = combined_df['yhat_lower'].fillna(combined_df['count']).apply(lambda x: x if x >= 0 else 0)
+                    combined_df['yhat_upper'] = combined_df['yhat_upper'].fillna(combined_df['count'])
+                    
+                    # Use a mask to only show uncertainty band on the forecast section
+                    forecast_mask = combined_df['type'] == 'Forecast'
+
                     # Build combined plotly figure
-                    fig_fc = px.line(title=f"30-day Forecast (method: {method})")
-                    if not hist.empty:
-                        fig_fc.add_scatter(x=hist.index, y=hist["count"], mode="lines+markers", name="Historical")
-                    fig_fc.add_scatter(x=fc_show["date"], y=fc_show["yhat"], mode="lines+markers", name="Forecast")
-                    # add uncertainty if available
-                    if "yhat_lower" in fc_show.columns and "yhat_upper" in fc_show.columns:
-                        fig_fc.add_traces([
-                            dict(
-                                x=list(fc_show["date"]) + list(fc_show["date"][::-1]),
-                                y=list(fc_show["yhat_upper"]) + list(fc_show["yhat_lower"][::-1]),
-                                fill='toself',
-                                fillcolor='rgba(0,100,80,0.2)',
-                                line=dict(color='rgba(255,255,255,0)'),
-                                hoverinfo="skip",
-                                showlegend=True,
-                                name="Forecast Interval"
-                            )
-                        ])
-                    fig_fc.update_layout(xaxis_title="Date", yaxis_title="Incidents", height=450)
+                    fig_fc = px.line(combined_df, x='ds', y='value', color='type', 
+                                    line_dash='type', markers=True,
+                                    title=f"30-day Forecast (method: {method})",
+                                    color_discrete_map={'Historical': '#1f77b4', 'Forecast': '#ff7f0e'})
+                    
+                    # Add uncertainty (confidence) band for the forecast period only
+                    fig_fc.add_traces([
+                        dict(
+                            x=list(combined_df.loc[forecast_mask, 'ds']) + list(combined_df.loc[forecast_mask, 'ds'][::-1]),
+                            y=list(combined_df.loc[forecast_mask, 'yhat_upper']) + list(combined_df.loc[forecast_mask, 'yhat_lower'][::-1]),
+                            fill='toself',
+                            fillcolor='rgba(255,127,14,0.2)', # Match forecast color but transparent
+                            line=dict(color='rgba(255,255,255,0)'),
+                            hoverinfo="skip",
+                            showlegend=True,
+                            name="Forecast Interval"
+                        )
+                    ])
+
+                    # Ensure y-axis starts at 0 for crime counts
+                    fig_fc.update_layout(xaxis_title="Date", yaxis_title="Incidents", height=450, yaxis=dict(range=[0, combined_df['yhat_upper'].max() * 1.05]))
                     st.plotly_chart(fig_fc, use_container_width=True)
                     p_fc = save_plotly_as_image(fig_fc)
                     if p_fc:
@@ -781,27 +807,56 @@ def show_dashboard():
                 if fc_df is None or (isinstance(fc_df, str) and fc_df.startswith("No")):
                     st.error("Not enough date-series data to forecast.")
                 else:
-                    hist = daily_counts.rename(columns={"ds": "date", "count": "count"}).set_index("date").sort_index()
-                    fc_show = fc_df.copy()
-                    fc_show["date"] = pd.to_datetime(fc_show["ds"])
-                    fig_fc = px.line(title=f"30-day Forecast (method: {method})")
-                    if not hist.empty:
-                        fig_fc.add_scatter(x=hist.index, y=hist["count"], mode="lines+markers", name="Historical")
-                    fig_fc.add_scatter(x=fc_show["date"], y=fc_show["yhat"], mode="lines+markers", name="Forecast")
-                    if "yhat_lower" in fc_show.columns and "yhat_upper" in fc_show.columns:
-                        fig_fc.add_traces([
-                            dict(
-                                x=list(fc_show["date"]) + list(fc_show["date"][::-1]),
-                                y=list(fc_show["yhat_upper"]) + list(fc_show["yhat_lower"][::-1]),
-                                fill='toself',
-                                fillcolor='rgba(0,100,80,0.2)',
-                                line=dict(color='rgba(255,255,255,0)'),
-                                hoverinfo="skip",
-                                showlegend=True,
-                                name="Forecast Interval"
-                            )
-                        ])
-                    fig_fc.update_layout(xaxis_title="Date", yaxis_title="Incidents", height=450)
+                    # Prepare data for plotting
+                    fc_show = fc_df.rename(columns={"yhat": "count"})
+                    
+                    # Combine historical and forecast data
+                    hist_for_plot = daily_counts.copy()
+                    hist_for_plot['type'] = 'Historical'
+                    hist_for_plot['yhat'] = hist_for_plot['count'] # Align column name for consistent plotting
+
+                    fc_for_plot = fc_show.copy()
+                    fc_for_plot['type'] = 'Forecast'
+                    
+                    # Pad historical end point with its last value and mark it as 'Forecast' start
+                    last_hist = hist_for_plot.iloc[-1].copy()
+                    last_hist['type'] = 'Forecast' 
+                    
+                    # Combine all data: Historical + (Last Historical Point as Forecast Start) + Forecast
+                    combined_df = pd.concat([
+                        hist_for_plot[['ds', 'yhat', 'count', 'type', 'yhat_lower', 'yhat_upper']].rename(columns={'yhat': 'value'}),
+                        last_hist[['ds', 'yhat', 'count', 'type']].rename(columns={'yhat': 'value'}).to_frame().T,
+                        fc_for_plot[['ds', 'yhat', 'yhat_lower', 'yhat_upper', 'type']].rename(columns={'yhat': 'value'})
+                    ])
+                    combined_df = combined_df.sort_values('ds').reset_index(drop=True)
+                    combined_df['yhat_lower'] = combined_df['yhat_lower'].fillna(combined_df['count']).apply(lambda x: x if x >= 0 else 0)
+                    combined_df['yhat_upper'] = combined_df['yhat_upper'].fillna(combined_df['count'])
+                    
+                    # Use a mask to only show uncertainty band on the forecast section
+                    forecast_mask = combined_df['type'] == 'Forecast'
+
+                    # Build combined plotly figure
+                    fig_fc = px.line(combined_df, x='ds', y='value', color='type', 
+                                    line_dash='type', markers=True,
+                                    title=f"30-day Forecast (method: {method})",
+                                    color_discrete_map={'Historical': '#1f77b4', 'Forecast': '#ff7f0e'})
+                    
+                    # Add uncertainty (confidence) band for the forecast period only
+                    fig_fc.add_traces([
+                        dict(
+                            x=list(combined_df.loc[forecast_mask, 'ds']) + list(combined_df.loc[forecast_mask, 'ds'][::-1]),
+                            y=list(combined_df.loc[forecast_mask, 'yhat_upper']) + list(combined_df.loc[forecast_mask, 'yhat_lower'][::-1]),
+                            fill='toself',
+                            fillcolor='rgba(255,127,14,0.2)', # Match forecast color but transparent
+                            line=dict(color='rgba(255,255,255,0)'),
+                            hoverinfo="skip",
+                            showlegend=True,
+                            name="Forecast Interval"
+                        )
+                    ])
+
+                    # Ensure y-axis starts at 0 for crime counts
+                    fig_fc.update_layout(xaxis_title="Date", yaxis_title="Incidents", height=450, yaxis=dict(range=[0, combined_df['yhat_upper'].max() * 1.05]))
                     st.plotly_chart(fig_fc, use_container_width=True)
                     p_fc = save_plotly_as_image(fig_fc)
                     if p_fc:
