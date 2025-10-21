@@ -15,24 +15,25 @@ import plotly.figure_factory as ff
 from sklearn.cluster import KMeans
 
 # Try to import forecasting libraries (Prophet preferred, then statsmodels, else fallback to linear)
+# MODIFIED: Explicitly set to False and commented out import attempts to force fallback to linear trend.
 HAS_PROPHET = False
 HAS_STATS = False
-try:
-    from prophet import Prophet
-    HAS_PROPHET = True
-except Exception:
-    try:
-        from fbprophet import Prophet  # older package name fallback
-        HAS_PROPHET = True
-    except Exception:
-        HAS_PROPHET = False
-
-if not HAS_PROPHET:
-    try:
-        from statsmodels.tsa.holtwinters import ExponentialSmoothing
-        HAS_STATS = True
-    except Exception:
-        HAS_STATS = False
+# try:
+#     from prophet import Prophet
+#     HAS_PROPHET = True
+# except Exception:
+#     try:
+#         from fbprophet import Prophet  # older package name fallback
+#         HAS_PROPHET = True
+#     except Exception:
+#         HAS_PROPHET = False
+#
+# if not HAS_PROPHET:
+#     try:
+#         from statsmodels.tsa.holtwinters import ExponentialSmoothing
+#         HAS_STATS = True
+#     except Exception:
+#         HAS_STATS = False
 
 # Define USERS_FILE globally
 USERS_FILE = "users.json"
@@ -250,6 +251,7 @@ def build_daily_counts(df):
     daily = daily[["ds", "count"]].sort_values("ds").reset_index(drop=True)
     return daily
 
+# Not used due to HAS_PROPHET=False
 def forecast_with_prophet(daily_df, periods=30):
     # expects daily_df with columns: ds (datetime), count (int)
     m = Prophet(daily_seasonality=True, weekly_seasonality=True, yearly_seasonality=True)
@@ -261,6 +263,7 @@ def forecast_with_prophet(daily_df, periods=30):
     fc = forecast[["ds", "yhat", "yhat_lower", "yhat_upper"]]
     return fc
 
+# Not used due to HAS_STATS=False
 def forecast_with_statsmodels(daily_df, periods=30):
     # Use ExponentialSmoothing on the count series if available
     daily_df = daily_df.set_index("ds").asfreq("D").fillna(0)
@@ -274,12 +277,12 @@ def forecast_with_statsmodels(daily_df, periods=30):
     return df_fc
 
 def forecast_with_linear(daily_df, periods=30):
-    # Simple linear regression on time index
+    # Simple linear regression on time index (THE FALLBACK METHOD)
     daily_df = daily_df.copy()
     daily_df = daily_df.set_index("ds").asfreq("D").fillna(0).reset_index()
     daily_df["t"] = np.arange(len(daily_df))
     coeffs = np.polyfit(daily_df["t"], daily_df["count"], 1)
-    trend = np.polyval(coeffs, daily_df["t"])
+    # trend = np.polyval(coeffs, daily_df["t"]) # unused, for plotting historical trend
     last_t = daily_df["t"].iloc[-1]
     future_ts = np.arange(last_t + 1, last_t + 1 + periods)
     preds = np.polyval(coeffs, future_ts)
@@ -292,7 +295,7 @@ def forecast_with_linear(daily_df, periods=30):
 def compute_forecast(daily_df, periods=30):
     if daily_df is None or daily_df.empty:
         return None, "No data"
-    # Try Prophet
+    # Try Prophet (Skipped because HAS_PROPHET is False)
     try:
         if HAS_PROPHET:
             fc = forecast_with_prophet(daily_df, periods=periods)
@@ -302,6 +305,7 @@ def compute_forecast(daily_df, periods=30):
         # fallthrough to next
         st.warning(f"Prophet forecasting failed: {e}")
 
+    # Try Statsmodels (Skipped because HAS_STATS is False)
     try:
         if HAS_STATS:
             fc = forecast_with_statsmodels(daily_df, periods=periods)
@@ -310,6 +314,7 @@ def compute_forecast(daily_df, periods=30):
     except Exception as e:
         st.warning(f"Statsmodels forecasting failed: {e}")
 
+    # Final Fallback: Simple Linear Trend
     try:
         fc = forecast_with_linear(daily_df, periods=periods)
         method = "linear_trend"
@@ -728,7 +733,7 @@ def show_dashboard():
         # Forecasting - Analyst
         st.markdown("---")
         st.subheader("📈 Crime Forecast (Next 30 days)")
-        st.caption("Forecast derived from historical daily counts. The app will try Prophet → statsmodels ExponentialSmoothing → linear trend fallback.")
+        st.caption("Forecast derived from historical daily counts. The app is now using the **linear trend fallback** for simplicity.")
         forecast_enable = st.checkbox("Enable 30-day forecast", value=True)
         if forecast_enable:
             with st.spinner("Computing forecast..."):
@@ -770,7 +775,7 @@ def show_dashboard():
     elif role == "law_enforcement":
         st.success("Law Enforcement View")
         st.subheader("Filtered Raw Data")
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, use_container_width=True)  
 
         st.markdown("---")
         st.subheader("Crime Incidents Map")
@@ -827,7 +832,7 @@ def show_dashboard():
         # Forecasting - Law enforcement view (same forecast but shown here)
         st.markdown("---")
         st.subheader("📈 Crime Forecast (Next 30 days)")
-        st.caption("Forecast derived from historical daily counts. The app will try Prophet → statsmodels ExponentialSmoothing → linear trend fallback.")
+        st.caption("Forecast derived from historical daily counts. The app is now using the **linear trend fallback** for simplicity.")
         forecast_enable = st.checkbox("Enable 30-day forecast (Law view)", value=True)
         if forecast_enable:
             with st.spinner("Computing forecast..."):
